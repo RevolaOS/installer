@@ -1,0 +1,8 @@
+#!/bin/sh
+# Rejects commit subjects that do not follow STYLE.md.
+subject=$(head -n1 "$1")
+pattern='^(feat|fix|perf|refactor|docs|test|build|ci|chore)\([a-z0-9/-]+\): [a-z0-9].{0,70}[^.]$'
+if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
+  echo "commit subject must be 'type(scope): summary' (see STYLE.md): $subject" >&2
+  exit 1
+fi
