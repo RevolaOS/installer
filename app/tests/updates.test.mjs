@@ -13,7 +13,13 @@ import {
 
 globalThis.window = { crypto: globalThis.crypto };
 globalThis.isTauri = true;
-const available = { current_version: "0.1.1", version: "0.1.2", mode: "automatic" };
+const available = {
+  current_version: "0.1.1",
+  version: "0.1.2",
+  mode: "automatic",
+  release_url: "https://github.com/RevolaOS/installer/releases/tag/v0.1.2",
+  notes: "## What's Changed\n* fix: example",
+};
 
 test("automatic updates serialize requests, report progress and recover from failure", async () => {
   let finishCheck;
@@ -31,6 +37,7 @@ test("automatic updates serialize requests, report progress and recover from fai
   finishCheck(available);
   await checking;
   assert.equal(getUpdateState().status, "available");
+  assert.deepEqual(getUpdateState().info, available);
   dismissUpdate();
   assert.equal(getUpdateState().dismissed, true);
 

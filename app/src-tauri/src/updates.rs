@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 mod platform;
 
-use crate::device::UsbState;
+use crate::{device::UsbState, github};
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -15,6 +15,7 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+const REPOSITORY: &str = "RevolaOS/installer";
 const FEED: &str = "https://github.com/RevolaOS/installer/releases/latest/download/latest.json";
 const DOWNLOAD_PAGE: &str = "https://github.com/RevolaOS/installer/releases/latest";
 
@@ -37,6 +38,9 @@ pub struct UpdateInfo {
     current_version: String,
     version: Option<String>,
     mode: UpdateMode,
+    /// GitHub release page and body of the available version.
+    release_url: Option<String>,
+    notes: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -72,6 +76,8 @@ pub async fn check_installer_update(app: AppHandle) -> Result<UpdateInfo, String
         current_version,
         version: None,
         mode,
+        release_url: None,
+        notes: None,
     };
     if mode == UpdateMode::Disabled {
         return Ok(info);
@@ -81,7 +87,7 @@ pub async fn check_installer_update(app: AppHandle) -> Result<UpdateInfo, String
         info.version = tauri::async_runtime::spawn_blocking(move || manual_update(&current))
             .await
             .map_err(|e| e.to_string())??;
-        return Ok(info);
+        return Ok(with_release_notes(info).await);
     }
     let update = app
         .updater_builder()
@@ -98,7 +104,29 @@ pub async fn check_installer_update(app: AppHandle) -> Result<UpdateInfo, String
         .pending
         .lock()
         .map_err(|e| e.to_string())? = update;
-    Ok(info)
+    Ok(with_release_notes(info).await)
+}
+
+/// Adds the release page and notes of the available version. The update feed carries no
+/// notes, so they come from the GitHub release; a failed lookup leaves the update usable.
+async fn with_release_notes(mut info: UpdateInfo) -> UpdateInfo {
+    let Some(version) = info.version.clone() else {
+        return info;
+    };
+    let release = tauri::async_runtime::spawn_blocking(move || {
+        github::release_by_tag(REPOSITORY, &format!("v{version}"))
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|release| release);
+    match release {
+        Ok(release) => {
+            info.notes = github::notes(&release);
+            info.release_url = Some(release.html_url);
+        }
+        Err(error) => eprintln!("installer release notes unavailable: {error}"),
+    }
+    info
 }
 
 fn manual_update(current: &semver::Version) -> Result<Option<String>, String> {

@@ -22,6 +22,9 @@ pub struct PackageInfo {
     version: String,
     digest: String,
     filename: Option<String>,
+    /// GitHub release page and body of the downloaded release; absent for local packages.
+    release_url: Option<String>,
+    notes: Option<String>,
 }
 
 fn package_info(bundle: &VerifiedBundle, filename: Option<String>) -> Result<PackageInfo, String> {
@@ -46,6 +49,8 @@ fn package_info(bundle: &VerifiedBundle, filename: Option<String>) -> Result<Pac
         version: bundle.manifest().version.clone(),
         digest: bundle.digest().to_owned(),
         filename,
+        release_url: None,
+        notes: None,
     })
 }
 
@@ -128,9 +133,12 @@ pub async fn prepare_package(
             require_target(&bundle.manifest().compatibility, target)?;
             return package_info(bundle, None);
         }
-        let url = match option_env!("REVOLA_BUNDLE_MANIFEST_URL") {
-            Some(url) => url.to_owned(),
-            None => releases::latest_manifest_url(&target.target)?,
+        let (url, release) = match option_env!("REVOLA_BUNDLE_MANIFEST_URL") {
+            Some(url) => (url.to_owned(), None),
+            None => {
+                let release = releases::latest(&target.target)?;
+                (release.manifest_url.clone(), Some(release))
+            }
         };
         let key = option_env!("REVOLA_BUNDLE_PUBLIC_KEY").unwrap_or(RELEASE_PUBLIC_KEY);
         let key = TrustedKey::from_hex(key).map_err(|e| e.to_string())?;
@@ -142,7 +150,11 @@ pub async fn prepare_package(
         let (_, bundle) = revola_bundle::fetch(&url, None, &key, &cache, env!("CARGO_PKG_VERSION"))
             .map_err(|e| e.to_string())?;
         require_target(&bundle.manifest().compatibility, target)?;
-        let info = package_info(&bundle, None)?;
+        let mut info = package_info(&bundle, None)?;
+        if let Some(release) = release {
+            info.release_url = Some(release.release_url);
+            info.notes = release.notes;
+        }
         *selected = Some(Arc::new(bundle));
         Ok(info)
     })

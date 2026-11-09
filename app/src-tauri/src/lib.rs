@@ -2,6 +2,7 @@
 mod about;
 mod device;
 mod firmware;
+mod github;
 mod install;
 mod package;
 mod updates;

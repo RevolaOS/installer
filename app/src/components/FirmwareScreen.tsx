@@ -18,7 +18,7 @@ interface IFirmwareScreenProps {
   onSelect: (file: FirmwareInfo | null) => void;
   localPackage: PackageInfo | null;
   onSelectPackage: (value: PackageInfo | null) => void;
-  onContinue: (packageDigest: string) => void;
+  onContinue: (pkg: PackageInfo) => void;
   onBack: () => void;
 }
 
@@ -97,7 +97,7 @@ const FirmwareScreen: React.FC<IFirmwareScreenProps> = ({
     try {
       const selected = await preparePackage(file.sha256, localPackage);
       appendSessionLog(`Package ready: ${selected.version} (${selected.digest}).`);
-      onContinue(selected.digest);
+      onContinue(selected);
     } catch (error) {
       const detail = errorDetail(error);
       setPackageError(detail);

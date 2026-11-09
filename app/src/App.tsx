@@ -10,6 +10,7 @@ import { InstallationScreen } from "./components/InstallationScreen";
 import { InstallerUpdates } from "./components/InstallerUpdates";
 import { MainScreen } from "./components/MainScreen";
 import { SuccessScreen } from "./components/SuccessScreen";
+import { SummaryScreen } from "./components/SummaryScreen";
 import { UninstallScreen } from "./components/UninstallScreen";
 import { UsbPermissionsScreen } from "./components/UsbPermissionsScreen";
 import { DebugLog } from "./components/ui/DebugLog";
@@ -28,6 +29,7 @@ export type Screen =
   | "permissions"
   | "dfu"
   | "checks"
+  | "summary"
   | "installation"
   | "success"
   | "about";
@@ -36,8 +38,9 @@ interface AppProps {
   initial?: {
     screen: Screen;
     firmware: FirmwareInfo | null;
-    packageDigest: string;
+    pkg: PackageInfo | null;
     localPackage?: PackageInfo;
+    mode?: "install" | "uninstall";
   };
 }
 
@@ -48,16 +51,16 @@ const App: React.FC<AppProps> = ({ initial }) => {
   const [localPackage, setLocalPackage] = React.useState<PackageInfo | null>(
     initial?.localPackage ?? null,
   );
-  const [packageDigest, setPackageDigest] = React.useState(initial?.packageDigest ?? "");
-  const [mode, setMode] = React.useState<"install" | "uninstall">("install");
+  const [pkg, setPackage] = React.useState<PackageInfo | null>(initial?.pkg ?? null);
+  const [mode, setMode] = React.useState<"install" | "uninstall">(initial?.mode ?? "install");
   const logs = React.useSyncExternalStore(subscribeToSessionLog, getSessionLog);
   const reducedMotion = useReducedMotion();
   const scrollRef = React.useRef<HTMLElement>(null);
 
   const begin = () => {
-    if (!packageDigest) return;
-    if (mode === "uninstall") startUninstall(packageDigest);
-    else if (firmware) startInstallation(firmware, packageDigest);
+    if (!pkg) return;
+    if (mode === "uninstall") startUninstall(pkg.digest);
+    else if (firmware) startInstallation(firmware, pkg.digest);
     else return;
     setScreen("installation");
   };
@@ -90,13 +93,13 @@ const App: React.FC<AppProps> = ({ initial }) => {
                   setMode("install");
                   setFirmware(null);
                   setLocalPackage(null);
-                  setPackageDigest("");
+                  setPackage(null);
                   setScreen("disclaimer");
                 }}
                 onUninstall={() => {
                   appendSessionLog("Uninstall setup started.");
                   setMode("uninstall");
-                  setPackageDigest("");
+                  setPackage(null);
                   setScreen("uninstall");
                 }}
               />
@@ -121,16 +124,16 @@ const App: React.FC<AppProps> = ({ initial }) => {
                     appendSessionLog(`Firmware validated: ${file.filename} (${file.version}).`);
                   }
                 }}
-                onContinue={(digest) => {
-                  setPackageDigest(digest);
+                onContinue={(selected) => {
+                  setPackage(selected);
                   setScreen("permissions");
                 }}
                 onBack={() => setScreen("disclaimer")}
               />
             ) : screen === "uninstall" ? (
               <UninstallScreen
-                onContinue={(digest) => {
-                  setPackageDigest(digest);
+                onContinue={(selected) => {
+                  setPackage(selected);
                   setScreen("permissions");
                 }}
                 onBack={() => setScreen("main")}
@@ -152,12 +155,19 @@ const App: React.FC<AppProps> = ({ initial }) => {
               />
             ) : screen === "checks" ? (
               <DeviceChecksScreen
-                onContinue={begin}
+                onContinue={() => setScreen(pkg ? "summary" : "checks")}
                 onBack={() => setScreen("dfu")}
                 onChangeFirmware={() => {
-                  setPackageDigest("");
+                  setPackage(null);
                   setScreen(packageScreen);
                 }}
+              />
+            ) : screen === "summary" && pkg ? (
+              <SummaryScreen
+                mode={mode}
+                pkg={pkg}
+                onConfirm={begin}
+                onBack={() => setScreen("checks")}
               />
             ) : screen === "installation" ? (
               <InstallationScreen

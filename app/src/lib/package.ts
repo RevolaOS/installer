@@ -5,6 +5,9 @@ export interface PackageInfo {
   version: string;
   digest: string;
   filename: string | null;
+  /** GitHub release page and body; null for local packages. */
+  release_url: string | null;
+  notes: string | null;
 }
 
 export async function chooseLocalPackage(): Promise<PackageInfo | null> {

@@ -84,7 +84,7 @@ Uninstall flow: package download (no IPSW), DFU detection, device checks, NOR ba
 
 Backups and assembled firmware are written under the app data directory for `org.revolaos.installer`. The About screen shows the NOTICE text and the version.
 
-Release bundles are fetched from the newest published release of `RevolaOS/revola` (`<target>-manifest.json` asset) and verified with the ed25519 key in `app/src-tauri/src/package.rs`; `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override both at build time. Installer updates come from `RevolaOS/installer` releases through the Tauri updater; the matching minisign public key is in `tauri.conf.json`.
+Release bundles are fetched from the newest published release of `RevolaOS/revola` (`<target>-manifest.json` asset) and verified with the ed25519 key in `app/src-tauri/src/package.rs`; `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override both at build time. Installer updates come from `RevolaOS/installer` releases through the Tauri updater; the matching minisign public key is in `tauri.conf.json`. The release notes shown for a firmware package and for an installer update are the bodies of those GitHub releases, read when the installer checks.
 
 Icons derive from `app/src-tauri/icons/source/*.svg`. To replace them, render a new 1024 px `icons/source.png` and run `pnpm tauri icon src-tauri/icons/source.png` from `app/`.
 

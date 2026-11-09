@@ -12,7 +12,7 @@ const scenario = findScenario(new URLSearchParams(location.search).get("scenario
 
 export function initializePreview() {
   installDevelopmentBackend(createMockBackend(scenario, undefined, savePreviewDebugZip));
-  if (scenario.screen === "checks") startDeviceChecks(mockDevice);
+  if (scenario.screen === "checks" || scenario.screen === "summary") startDeviceChecks(mockDevice);
   if (scenario.screen === "installation") startInstallation(mockFirmware, mockPackage.digest);
   if (scenario.startUpdate) void checkInstallerUpdate().then(installInstallerUpdate);
 }
@@ -69,7 +69,8 @@ export function DevPanel() {
         initial={{
           screen: scenario.screen,
           firmware: scenario.firmwareError ? null : mockFirmware,
-          packageDigest: mockPackage.digest,
+          pkg: mockPackage,
+          mode: scenario.mode,
           localPackage: scenario.localPackage
             ? { ...mockPackage, filename: "revola.zip" }
             : undefined,

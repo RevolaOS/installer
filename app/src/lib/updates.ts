@@ -6,6 +6,8 @@ export interface UpdateInfo {
   current_version: string;
   version: string | null;
   mode: "automatic" | "manual" | "disabled";
+  release_url: string | null;
+  notes: string | null;
 }
 export interface UpdateProgress {
   stage: "downloading" | "installing";
@@ -52,6 +54,9 @@ export function updateIsBusy(status: UpdateState["status"]) {
 }
 export function dismissUpdate() {
   publish({ ...state, dismissed: true });
+}
+export function showUpdate() {
+  publish({ ...state, dismissed: false });
 }
 
 export async function checkInstallerUpdate() {

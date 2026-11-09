@@ -18,6 +18,7 @@ export interface Scenario {
   packageError?: string;
   installFailure?: { stage: string; detail: string };
   debugExport?: "native" | "cancel" | "error";
+  mode?: "install" | "uninstall";
   update?: "available" | "manual" | "current" | "check-error" | "download-error" | "installing";
   startUpdate?: boolean;
 }
@@ -221,6 +222,19 @@ export const scenarios: Scenario[] = [
     label: "Uninstall",
     screen: "uninstall",
     hint: "Continue, then follow the DFU and check screens to simulate removal.",
+  },
+  {
+    id: "ready-to-install",
+    group: "Installation",
+    label: "Ready to install",
+    screen: "summary",
+  },
+  {
+    id: "ready-to-remove",
+    group: "Installation",
+    label: "Ready to remove",
+    screen: "summary",
+    mode: "uninstall",
   },
   {
     id: "installation-success",

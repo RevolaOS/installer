@@ -22,4 +22,18 @@ export const mockPackage: PackageInfo = {
   version: "0.1.1",
   digest: "mock-package-digest",
   filename: null,
+  release_url: "https://github.com/RevolaOS/revola/releases/tag/v0.1.1",
+  notes: [
+    "## What's Changed",
+    "* feat(core): shrink the artwork cache when the library import needs heap by @paviro in https://github.com/RevolaOS/revola/pull/12",
+    "* fix(loader): start extensions in manifest order",
+    "",
+    "**Full Changelog**: https://github.com/RevolaOS/revola/compare/v0.1.0...v0.1.1",
+  ].join("\n"),
 };
+
+export const mockUpdateNotes = [
+  "## What's Changed",
+  "* feat(app): show installer and firmware release notes",
+  "* fix(device): retry DFU detection after a USB reset",
+].join("\n");

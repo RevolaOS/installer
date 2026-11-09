@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import type { Backend, EventChannel } from "../lib/backend.ts";
 import { simulateChecks, type Wait } from "./checks.ts";
-import { mockDevice, mockFirmware, mockPackage } from "./fixtures.ts";
+import { mockDevice, mockFirmware, mockPackage, mockUpdateNotes } from "./fixtures.ts";
 import { simulateInstallation, simulateUninstall, simulateUpdate } from "./progress.ts";
 import type { Scenario } from "./scenarios.ts";
 
@@ -88,6 +88,8 @@ export function createMockBackend(
         return {
           ...mockPackage,
           filename: command === "choose_local_package" ? "revola.zip" : null,
+          release_url: command === "choose_local_package" ? null : mockPackage.release_url,
+          notes: command === "choose_local_package" ? null : mockPackage.notes,
         };
       case "install":
         cancelled = false;
@@ -103,17 +105,23 @@ export function createMockBackend(
         if (scenario.debugExport === "error") throw new Error("Destination is not writable.");
         if (saveDebug) return saveDebug(String(args.sessionLog ?? ""));
         throw new Error("Native debug export is unavailable in this preview.");
-      case "check_installer_update":
+      case "check_installer_update": {
         await wait();
         if (scenario.update === "check-error")
           throw new Error(
             "Could not check for updates. Check your internet connection and try again.",
           );
+        const available = scenario.update && scenario.update !== "current";
         return {
           current_version: "0.1.1",
-          version: scenario.update && scenario.update !== "current" ? "0.1.2" : null,
+          version: available ? "0.1.2" : null,
           mode: scenario.update === "manual" ? "manual" : "automatic",
+          release_url: available
+            ? "https://github.com/RevolaOS/installer/releases/tag/v0.1.2"
+            : null,
+          notes: available ? mockUpdateNotes : null,
         };
+      }
       case "install_installer_update":
         return simulateUpdate(scenario, channel(args), wait);
       case "plugin:opener|open_url":

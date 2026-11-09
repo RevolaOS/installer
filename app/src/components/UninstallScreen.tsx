@@ -12,7 +12,7 @@ import { ScreenReveal } from "./ui/ScreenReveal";
 import { WarningSymbol } from "./ui/WarningSymbol";
 
 interface IUninstallScreenProps {
-  onContinue: (packageDigest: string) => void;
+  onContinue: (pkg: PackageInfo) => void;
   onBack: () => void;
 }
 
@@ -36,7 +36,7 @@ const UninstallScreen: React.FC<IUninstallScreenProps> = ({ onContinue, onBack }
       }
       const selected = await preparePackage(null, localPackage);
       appendSessionLog(`Package ready: ${selected.version} (${selected.digest}).`);
-      onContinue(selected.digest);
+      onContinue(selected);
     } catch (error) {
       const detail = errorDetail(error);
       setError(detail);
