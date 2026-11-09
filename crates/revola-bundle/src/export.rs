@@ -3,8 +3,8 @@
 
 use crate::{
     asset_filename, invalid, load_assets, read_file, sha256, write_directory, Asset, Compatibility,
-    Component, Manifest, Purpose, Result, VerifiedBundle, MANIFEST_FILE, MAX_ASSET_BYTES,
-    MAX_BUNDLE_BYTES, MAX_MANIFEST_BYTES, SIGNATURE_FILE,
+    Component, Core, Extension, Manifest, Purpose, Result, VerifiedBundle, MANIFEST_FILE,
+    MAX_ASSET_BYTES, MAX_BUNDLE_BYTES, MAX_MANIFEST_BYTES, SCHEMA, SIGNATURE_FILE,
 };
 use serde::Deserialize;
 use std::{collections::BTreeMap, fs, io::Write, path::Path};
@@ -17,39 +17,54 @@ struct Specification {
     version: String,
     minimum_installer_version: String,
     compatibility: Compatibility,
+    #[serde(default)]
+    core: Option<Core>,
     components: BTreeMap<String, Component>,
+    #[serde(default)]
+    extensions: BTreeMap<String, Extension>,
 }
 
 pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manifest> {
     let spec: Specification =
         serde_json::from_slice(&read_file(specification, MAX_MANIFEST_BYTES)?)?;
     let mut manifest = Manifest {
-        schema: 2,
+        schema: SCHEMA,
         purpose: spec.purpose,
         version: spec.version,
         minimum_installer_version: spec.minimum_installer_version,
         compatibility: spec.compatibility,
+        core: spec.core,
         components: spec.components,
+        extensions: spec.extensions,
         assets: BTreeMap::new(),
     };
     let mut assets = BTreeMap::new();
     let mut total = 0;
-    for component in manifest.components.values_mut() {
-        for filename in component.files.values_mut() {
-            let bytes = read_file(&base.join(&*filename), MAX_ASSET_BYTES)?;
-            let hash = sha256(&bytes);
-            if !assets.contains_key(&hash) {
-                total += bytes.len();
-                if total > MAX_BUNDLE_BYTES {
-                    return Err(invalid("Bundle too large"));
-                }
-                manifest
-                    .assets
-                    .insert(hash.clone(), Asset { bytes: bytes.len() });
-                assets.insert(hash.clone(), bytes);
+    let files = manifest
+        .components
+        .values_mut()
+        .map(|component| &mut component.files)
+        .chain(
+            manifest
+                .extensions
+                .values_mut()
+                .map(|extension| &mut extension.files),
+        )
+        .flat_map(|files| files.values_mut());
+    for filename in files {
+        let bytes = read_file(&base.join(&*filename), MAX_ASSET_BYTES)?;
+        let hash = sha256(&bytes);
+        if !assets.contains_key(&hash) {
+            total += bytes.len();
+            if total > MAX_BUNDLE_BYTES {
+                return Err(invalid("Bundle too large"));
             }
-            *filename = hash;
+            manifest
+                .assets
+                .insert(hash.clone(), Asset { bytes: bytes.len() });
+            assets.insert(hash.clone(), bytes);
         }
+        *filename = hash;
     }
     manifest.validate(&manifest.minimum_installer_version)?;
     let mut raw = serde_json::to_vec_pretty(&manifest)?;
@@ -62,7 +77,8 @@ pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manife
         assets,
         digest: sha256(&raw),
     }
-    .check_helper()?;
+    .check_helper()?
+    .check_extensions()?;
     let mut files = BTreeMap::from([(MANIFEST_FILE.to_owned(), raw)]);
     for (hash, bytes) in bundle.assets {
         files.insert(asset_filename(&hash), bytes);
@@ -89,7 +105,8 @@ pub fn pack(directory: &Path, output: &Path) -> Result<Manifest> {
         assets,
         digest: sha256(&raw),
     }
-    .check_helper()?;
+    .check_helper()?
+    .check_extensions()?;
     let mut files = BTreeMap::from([(MANIFEST_FILE.to_owned(), raw)]);
     for (hash, bytes) in bundle.assets {
         files.insert(asset_filename(&hash), bytes);

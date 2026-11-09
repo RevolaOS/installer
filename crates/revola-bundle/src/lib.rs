@@ -26,6 +26,11 @@ pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 pub const MAX_ASSET_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
 pub const MANIFEST_FILE: &str = "manifest.json";
+pub const SCHEMA: u32 = 3;
+pub const EXTENSIONS_ROOT: &str = "/Revola/Extensions";
+pub const EXTENSION_FORMAT: &str = "revola-extension-v1";
+const RVX_MAGIC: &[u8; 4] = b"RVX0";
+const MAX_EXTENSION_FILES: usize = 16;
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +74,27 @@ pub struct Component {
     pub files: BTreeMap<String, String>,
 }
 
+/// The core the bundle's extensions were built against.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Core {
+    /// `rv_api` major; every extension must match it.
+    pub api: u32,
+    /// Fingerprint constant of the pinned OSOS, checked by the loader in each `.rvx`.
+    pub firmware_build_id: u32,
+}
+
+/// One extension package, installed as `/Revola/Extensions/<id>/<file>`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Extension {
+    pub format: String,
+    pub version: String,
+    pub api: u32,
+    /// On-device file name to SHA-256; `manifest.bin` plus `.rvx` modules.
+    pub files: BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -77,8 +103,18 @@ pub struct Manifest {
     pub version: String,
     pub minimum_installer_version: String,
     pub compatibility: Compatibility,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<Core>,
     pub components: BTreeMap<String, Component>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, Extension>,
     pub assets: BTreeMap<String, Asset>,
+}
+
+/// A file to upload, with its absolute path on the device.
+pub struct ExtensionFile<'a> {
+    pub destination: String,
+    pub bytes: &'a [u8],
 }
 
 impl Manifest {
@@ -93,7 +129,7 @@ impl Manifest {
                 "This firmware release requires installer {minimum} or newer. Update the RevolaOS installer, then try again."
             )));
         }
-        if self.schema != 2 {
+        if self.schema != SCHEMA {
             return Err(invalid(
                 "This firmware package uses an unsupported format. Update the RevolaOS installer, then try again.",
             ));
@@ -116,10 +152,10 @@ impl Manifest {
         let mut referenced = BTreeSet::new();
         for (name, component) in &self.components {
             let (format, required): (&str, &[&str]) = match name.as_str() {
-                "usb_helper" => ("reprise-upload-v3", &["image", "descriptor"]),
-                "osos" => ("reprise-osos-recipe-v2", &["recipe", "data"]),
-                "companion" => ("reprise-companion-recipe-v2", &["recipe", "data"]),
-                "nor" => ("reprise-nor-template-v1", &["image", "descriptor"]),
+                "usb_helper" => ("revola-upload-v1", &["image", "descriptor"]),
+                "osos" => ("revola-osos-recipe-v1", &["recipe", "data"]),
+                "companion" => ("revola-companion-recipe-v1", &["recipe", "data"]),
+                "nor" => ("revola-nor-template-v1", &["image", "descriptor"]),
                 _ => return Err(invalid("Unknown bundle component")),
             };
             if component.format != format
@@ -137,11 +173,39 @@ impl Manifest {
             }
         }
         if self.purpose == Purpose::Release
-            && ["usb_helper", "osos", "companion", "nor"]
-                .iter()
-                .any(|name| !self.components.contains_key(*name))
+            && (self.core.is_none()
+                || ["usb_helper", "osos", "companion", "nor"]
+                    .iter()
+                    .any(|name| !self.components.contains_key(*name)))
         {
-            return Err(invalid("Release bundle requires all four components"));
+            return Err(invalid(
+                "Release bundle requires the core profile and all four components",
+            ));
+        }
+        if !self.extensions.is_empty() && self.core.is_none() {
+            return Err(invalid("Extensions require the core profile"));
+        }
+        for (id, extension) in &self.extensions {
+            if !valid_extension_id(id)
+                || extension.format != EXTENSION_FORMAT
+                || Version::parse(&extension.version).is_err()
+                || Some(extension.api) != self.core.as_ref().map(|core| core.api)
+                || !extension.files.contains_key("manifest.bin")
+                || extension.files.len() < 2
+                || extension.files.len() > MAX_EXTENSION_FILES
+                || extension
+                    .files
+                    .keys()
+                    .any(|name| name != "manifest.bin" && !valid_module_name(name))
+            {
+                return Err(invalid(format!("Invalid extension package: {id}")));
+            }
+            for hash in extension.files.values() {
+                if !self.assets.contains_key(hash) {
+                    return Err(invalid("Invalid extension asset reference"));
+                }
+                referenced.insert(hash);
+            }
         }
         let mut total = 0usize;
         for (hash, asset) in &self.assets {
@@ -195,7 +259,42 @@ impl VerifiedBundle {
             digest: sha256(&raw),
             assets,
         }
-        .check_helper()
+        .check_helper()?
+        .check_extensions()
+    }
+
+    /// Module images must start with the `.rvx` magic. The remaining header words are
+    /// checked once the loader fixes their order.
+    fn check_extensions(self) -> Result<Self> {
+        for (id, extension) in &self.manifest.extensions {
+            for (name, hash) in &extension.files {
+                if name != "manifest.bin" && self.assets[hash].get(..4) != Some(RVX_MAGIC) {
+                    return Err(invalid(format!("{id}/{name} is not an rvx module")));
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    /// Extension files in upload order, ids and names sorted.
+    pub fn extension_files(&self) -> Vec<ExtensionFile<'_>> {
+        self.manifest
+            .extensions
+            .iter()
+            .flat_map(|(id, extension)| {
+                extension
+                    .files
+                    .iter()
+                    .map(move |(name, hash)| ExtensionFile {
+                        destination: format!("{EXTENSIONS_ROOT}/{id}/{name}"),
+                        bytes: &self.assets[hash],
+                    })
+            })
+            .collect()
+    }
+
+    pub fn extension_bytes(&self) -> usize {
+        self.extension_files().iter().map(|f| f.bytes.len()).sum()
     }
 
     fn check_helper(self) -> Result<Self> {
@@ -259,7 +358,8 @@ pub fn sign_directory(
         digest: sha256(&raw),
         assets,
     }
-    .check_helper()?;
+    .check_helper()?
+    .check_extensions()?;
     let key = SigningKey::from_bytes(&decode_hex::<32>(secret_hex.trim())?);
     write_new(&directory.join(SIGNATURE_FILE), &key.sign(&raw).to_bytes())?;
     Ok(hex(&key.verifying_key().to_bytes()))
@@ -323,6 +423,24 @@ fn valid_target_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+}
+
+fn valid_extension_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+}
+
+fn valid_module_name(value: &str) -> bool {
+    value.strip_suffix(".rvx").is_some_and(|stem| {
+        !stem.is_empty()
+            && stem
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+    })
 }
 
 fn valid_name(value: &str) -> bool {

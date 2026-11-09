@@ -78,7 +78,7 @@ def helper_spec(directory, version, minimum):
         "compatibility": firmware.load()["compatibility"],
         "components": {
             "usb_helper": {
-                "format": "reprise-upload-v3",
+                "format": "revola-upload-v1",
                 "files": {
                     "image": str(directory.resolve() / "upload.dfu"),
                     "descriptor": str(directory.resolve() / "manifest.json"),

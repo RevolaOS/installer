@@ -107,10 +107,12 @@ fn assemble_component(
     recipe.apply(&inputs.0, bundle.file(name, "data")?)
 }
 
+/// Bytes written to the data partition: both images plus every extension file.
 pub fn disk_bytes(bundle: &VerifiedBundle) -> Result<u32> {
     let osos = Recipe::parse(bundle.file("osos", "recipe")?)?;
     let companion = Recipe::parse(bundle.file("companion", "recipe")?)?;
-    Ok((osos.output.bytes + companion.output.bytes) as u32)
+    u32::try_from(osos.output.bytes + companion.output.bytes + bundle.extension_bytes())
+        .map_err(|_| invalid("Package disk size overflow"))
 }
 
 pub fn assemble_osos(bundle: &VerifiedBundle, inputs: &AppleInputs) -> Result<Vec<u8>> {
@@ -313,6 +315,8 @@ pub struct Artifacts {
     pub osos: Vec<u8>,
     pub companion: Vec<u8>,
     pub nor_installer: Vec<u8>,
+    /// Device path without the leading slash, and contents, in upload order.
+    pub extensions: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Serialize)]
@@ -328,12 +332,18 @@ pub struct FileReport {
 }
 
 impl Artifacts {
-    fn files(&self) -> [(&str, &[u8]); 3] {
-        [
-            ("osos-cfw.bin", &self.osos),
+    fn files(&self) -> Vec<(&str, &[u8])> {
+        let mut files = vec![
+            ("osos-cfw.bin", self.osos.as_slice()),
             ("cfw-loader.bin", &self.companion),
             ("install-rockbox-cfw.dfu", &self.nor_installer),
-        ]
+        ];
+        files.extend(
+            self.extensions
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        );
+        files
     }
 
     pub fn report(&self) -> AssemblyReport {
@@ -396,6 +406,11 @@ pub fn assemble_with_hardware_policy(
         osos: assemble_osos(bundle, inputs)?,
         companion: assemble_companion_with_policy(bundle, inputs, &syscfg, policy)?,
         nor_installer: nor_installer(bundle)?,
+        extensions: bundle
+            .extension_files()
+            .into_iter()
+            .map(|file| (file.destination[1..].to_owned(), file.bytes.to_vec()))
+            .collect(),
     })
 }
 

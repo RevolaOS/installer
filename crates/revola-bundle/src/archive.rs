@@ -39,7 +39,8 @@ impl VerifiedBundle {
             digest: sha256(&raw),
             assets,
         }
-        .check_helper()
+        .check_helper()?
+        .check_extensions()
     }
 }
 

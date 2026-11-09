@@ -150,7 +150,8 @@ fn fetch_with(
         digest: digest.clone(),
         assets,
     }
-    .check_helper()?;
+    .check_helper()?
+    .check_extensions()?;
     match fs::rename(staging.path(), &directory) {
         Ok(()) => Ok((directory, bundle)),
         Err(_) if directory.try_exists()? => {
