@@ -31,6 +31,24 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 
 Device commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files. Bundle components keep the schema 2 format names from RepriseOS so existing recipes assemble unchanged.
 
+### Bundles
+
+A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signature `manifest.json.sig` and content-addressed `<sha256>.blob` assets. Schema 3:
+
+| Field | Meaning |
+|---|---|
+| `schema` | 3 |
+| `purpose`, `version`, `minimum_installer_version` | as named; older installers refuse newer bundles |
+| `compatibility` | target, hardware versions, BootROM hash |
+| `core` | `api` (the `rv_api` major) and `firmware_build_id` of the pinned OSOS |
+| `components` | `usb_helper`, `osos`, `companion`, `nor`, each with a `format` and named files |
+| `extensions` | id to `{format, version, api, files}`; files are `manifest.bin` plus `.rvx` modules |
+| `assets` | hash to size |
+
+Extension ids are lower-case ASCII, at most 32 characters. Every extension's `api` must equal `core.api`, each `.rvx` must start with the `RVX0` magic, and the installer uploads the files to `/Revola/Extensions/<id>/` after `osos-cfw.bin`; the helper creates missing directories. TODO: check the remaining `.rvx` header words and parse `manifest.bin` once the loader fixes their layout.
+
+`revola bundle export --spec FILE --base DIR --out DIR` builds a bundle from a specification with the same fields minus `schema` and `assets`, with file paths instead of hashes; `sign`, `pack`, `inspect`, `fetch` and `assemble` operate on the result.
+
 Offline replay tests are ignored unless these variables point at preserved 2.0.5 material outside the repository: `REVOLA_ASSEMBLY_ROOT`, `REVOLA_ASSEMBLY_BUILD`, `REVOLA_TEST_IPSW`, `REVOLA_TEST_PACKAGE`, `REVOLA_TEST_BOOTROM` and optionally `REVOLA_TEST_NOR`.
 
 DFU code is adapted from wInd3x; the PIPE0 protocol follows Rockbox's `ipoddfu.c`. See NOTICE.

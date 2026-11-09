@@ -43,23 +43,44 @@ pub(super) fn install(
     action: assembly::BootloaderAction,
     job: &mut Job<'_>,
 ) -> Result<InstallOutcome> {
-    let files = [
+    let mut files = vec![
         (
-            "uploadLoader",
-            "companion loader",
-            "cfw-loader.bin",
-            &artifacts.companion,
+            "uploadLoader".to_owned(),
+            "companion loader".to_owned(),
+            "/cfw-loader.bin".to_owned(),
+            artifacts.companion.as_slice(),
         ),
-        ("uploadOsos", "RevolaOS", "osos-cfw.bin", &artifacts.osos),
+        (
+            "uploadOsos".into(),
+            "RevolaOS".into(),
+            "/osos-cfw.bin".into(),
+            &artifacts.osos,
+        ),
     ];
+    // Extension files follow the core so a failed upload never leaves a core
+    // that expects modules which are not there yet.
+    for (index, (path, bytes)) in artifacts.extensions.iter().enumerate() {
+        files.push((
+            format!("uploadExtension{index}"),
+            path.rsplit('/').nth(1).unwrap_or(path).to_owned(),
+            format!("/{path}"),
+            bytes,
+        ));
+    }
     for (stage, name, destination, bytes) in files {
-        job.stage(stage, &format!("Preparing {name}"))?;
+        let stage = stage.as_str();
+        let label = if stage.starts_with("uploadExtension") {
+            "uploadExtensions"
+        } else {
+            stage
+        };
+        job.stage(label, &format!("Preparing {name}"))?;
         let log_job = std::cell::RefCell::new(&mut *job);
         let uploaded = session.upload_with_log(
             helper,
             &mut Cursor::new(bytes),
             UploadOptions {
-                destination: format!("/{destination}"),
+                destination: destination.clone(),
                 overwrite: true,
             },
             |p| {

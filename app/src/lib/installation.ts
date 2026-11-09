@@ -44,10 +44,9 @@ const labels: Record<string, string> = {
   backup: "Backing up boot firmware",
   decrypt: "Preparing Apple firmware",
   assemble: "Preparing RevolaOS",
-  uploadDefaultTheme: "Uploading stock artwork",
-  uploadDarkTheme: "Uploading Dark Mode artwork",
   uploadLoader: "Uploading companion loader",
   uploadOsos: "Uploading RevolaOS",
+  uploadExtensions: "Uploading extensions",
   bootloader: "Preparing bootloader installer",
   restart: "Restarting iPod",
 };

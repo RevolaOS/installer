@@ -175,6 +175,7 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
         osos: b"first".to_vec(),
         companion: b"companion".to_vec(),
         nor_installer: b"installer".to_vec(),
+        extensions: Vec::new(),
     };
     let mut reports = Vec::new();
     for (device, osos) in [
