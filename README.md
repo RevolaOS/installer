@@ -45,7 +45,7 @@ A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signatur
 | `extensions` | id to `{format, version, api, files}`; files are `manifest.bin` plus `.rvx` modules |
 | `assets` | hash to size |
 
-Extension ids are lower-case ASCII, at most 32 characters. Every extension's `api` must equal `core.api`, each `.rvx` must start with the `RVX0` magic, and the installer uploads the files to `/Revola/Extensions/<id>/` after `osos-cfw.bin`; the helper creates missing directories. TODO: check the remaining `.rvx` header words and parse `manifest.bin` once the loader fixes their layout.
+Extension ids are lower-case ASCII, at most 32 characters; FAT32 is case-insensitive and may return a short name in upper case, so nothing may depend on the case of a directory name. Every extension's `api` must equal `core.api`, each `.rvx` must start with the `RVX0` magic, and the installer uploads the files to `/Revola/Extensions/<id>/` after `osos-cfw.bin`; the helper creates missing directories. TODO: check the remaining `.rvx` header words and parse `manifest.bin` once the loader fixes their layout.
 
 `revola bundle export --spec FILE --base DIR --out DIR` builds a bundle from a specification with the same fields minus `schema` and `assets`, with file paths instead of hashes; `sign`, `pack`, `inspect`, `fetch` and `assemble` operate on the result.
 
