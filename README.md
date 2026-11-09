@@ -2,7 +2,71 @@
 
 Desktop installer for RevolaOS and the Rust crates it is built on: device access over DFU, firmware input preparation, recipe assembly and bundle verification, plus the command-line tool and the on-device USB helper.
 
-TODO: port from the RepriseOS installer and host crates.
+## Layout
+
+| Path | Contents |
+|---|---|
+| `crates/revola-device` | BootROM DFU checks, NOR backup, AES decryption through the device, verified file uploads, bootloader installation |
+| `crates/revola-bundle` | Signed release bundles, IPSW and AUPD preparation, recipe assembly |
+| `crates/revola-cli` | The `revola` command line tool over both crates |
+| `firmware/apple.json` | Sizes and hashes of the pinned Apple 2.0.5 inputs; no Apple bytes |
+| `usb-helper/` | On-device upload helper: streams a file to the FAT32 volume, verifies readback, returns to DFU |
+| `rockbox/` | Patch applied to the pinned Rockbox checkout the helper is built from |
+| `tools/` | `setup.py` vendors Rockbox, `firmware.py` reads the profile, `bundle.py` exports and packs bundles through the CLI |
+
+## Crates and CLI
+
+Requires Rust, libusb and pkg-config.
+
+```sh
+cargo build --release -p revola-cli
+target/release/revola --help
+target/release/revola devices
+target/release/revola check
+target/release/revola nor-dump --output nor.bin
+target/release/revola firmware inspect --ipsw iPod_38.2.0.5.ipsw
+target/release/revola bundle apply-recipe --recipe osos.json --data osos.data --inputs DECRYPTED_DIR --out osos-cfw.bin
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+```
+
+Device commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files. Bundle components keep the schema 2 format names from RepriseOS so existing recipes assemble unchanged.
+
+Offline replay tests are ignored unless these variables point at preserved 2.0.5 material outside the repository: `REVOLA_ASSEMBLY_ROOT`, `REVOLA_ASSEMBLY_BUILD`, `REVOLA_TEST_IPSW`, `REVOLA_TEST_PACKAGE`, `REVOLA_TEST_BOOTROM` and optionally `REVOLA_TEST_NOR`.
+
+DFU code is adapted from wInd3x; the PIPE0 protocol follows Rockbox's `ipoddfu.c`. See NOTICE.
+
+## USB upload helper
+
+The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d`, writes one file to the data partition, reads it back and returns to DFU. Building it needs GNU make, `arm-elf-eabi-gcc` 9.5.0 (the version is pinned in `firmware/apple.json`) and the Rockbox checkout pinned in `dependencies.lock`:
+
+```sh
+python3 tools/setup.py            # clones Rockbox into vendor/ and applies rockbox/*.patch
+python3 tools/setup.py --check    # verifies the pin
+python3 usb-helper/build.py --toolchain /path/to/bin --out build/usb-helper
+python3 -m unittest discover -s usb-helper/tests -p '*_test.py'
+```
+
+`build/usb-helper/upload.dfu` is the IMG1 image and `manifest.json` describes it (schema 3: BootROM hash, size, SHA-256, offsets of the nonce, config and cold-init slots). Both go into a bundle as the `usb_helper` component. `usb-helper/tests/fixtures/` holds one built image for the Rust and Python tests; it contains Rockbox and helper code only.
+
+## Desktop app
+
+`app/` holds the Tauri 2 and React installer. It is a member of the root Cargo workspace and uses the crates by path, so one `cargo test --workspace` covers it. Requires Node.js, pnpm and the Tauri platform prerequisites besides the Rust toolchain.
+
+```sh
+cd app
+pnpm install
+pnpm tauri dev        # development build with hot reload
+pnpm check            # typecheck, biome lint and frontend tests
+pnpm tauri build      # bundles under ../target/release/bundle
+```
+
+Install flow: disclaimer, IPSW selection, USB permissions on Linux, DFU detection, device checks, NOR backup, firmware assembly, upload and bootloader install. Backups and assembled firmware are written under the app data directory for `org.revolaos.installer`. The About screen shows the NOTICE text and the version.
+
+Release bundles are fetched from the newest published release of `RevolaOS/revola` (`<target>-manifest.json` asset) and verified with the ed25519 key in `app/src-tauri/src/package.rs`; `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override both at build time. Installer updates come from `RevolaOS/installer` releases through the Tauri updater; the matching minisign public key is in `tauri.conf.json`.
+
+Icons derive from `app/src-tauri/icons/source/*.svg`. To replace them, render a new 1024 px `icons/source.png` and run `pnpm tauri icon src-tauri/icons/source.png` from `app/`.
+
+TODO: Icon Composer `.icon` bundle for macOS 26 layered icons.
 
 ## What drives development
 
