@@ -1,0 +1,11 @@
+{
+  "schema": 3,
+  "storage_inspection": true,
+  "mode": "stream-file",
+  "rom_sha256": "69c087afc5753d7f0f11f09b141b372af753a854bc526673ea444c486d6003e4",
+  "bytes": 89440,
+  "sha256": "07af9b210c620c482e80fbeadf8cd02db15ec998beff8cd98fe8acf11228af13",
+  "nonce_offset": 88736,
+  "config_offset": 88756,
+  "cold_init_offset": 76804
+}
