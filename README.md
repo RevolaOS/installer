@@ -6,11 +6,11 @@ Desktop installer for RevolaOS and the Rust crates it is built on: device access
 
 | Path | Contents |
 |---|---|
-| `crates/revola-device` | BootROM DFU checks, NOR backup, AES decryption through the device, verified file uploads, bootloader installation |
+| `crates/revola-device` | BootROM DFU checks, NOR backup, AES decryption through the device, verified file uploads and removal, bootloader installation |
 | `crates/revola-bundle` | Signed release bundles, IPSW and AUPD preparation, recipe assembly |
 | `crates/revola-cli` | The `revola` command line tool over both crates |
 | `firmware/apple.json` | Sizes and hashes of the pinned Apple 2.0.5 inputs; no Apple bytes |
-| `usb-helper/` | On-device upload helper: streams a file to the FAT32 volume, verifies readback, returns to DFU |
+| `usb-helper/` | On-device upload helper: streams a file to the FAT32 volume, verifies readback or removes the RevolaOS files, returns to DFU |
 | `rockbox/` | Patch applied to the pinned Rockbox checkout the helper is built from |
 | `tools/` | `setup.py` vendors Rockbox, `firmware.py` reads the profile, `bundle.py` exports and packs bundles through the CLI |
 
@@ -55,7 +55,7 @@ DFU code is adapted from wInd3x; the PIPE0 protocol follows Rockbox's `ipoddfu.c
 
 ## USB upload helper
 
-The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d`, writes one file to the data partition, reads it back and returns to DFU. Building it needs GNU make, `arm-elf-eabi-gcc` 9.5.0 (the version is pinned in `firmware/apple.json`) and the Rockbox checkout pinned in `dependencies.lock`:
+The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d`, writes one file to the data partition and reads it back, or deletes `/osos-cfw.bin`, `/cfw-loader.bin`, `/Revola/` and unfinished uploads, then returns to DFU. Building it needs GNU make, `arm-elf-eabi-gcc` 9.5.0 (the version is pinned in `firmware/apple.json`) and the Rockbox checkout pinned in `dependencies.lock`:
 
 ```sh
 python3 tools/setup.py            # clones Rockbox into vendor/ and applies rockbox/*.patch
@@ -64,7 +64,7 @@ python3 usb-helper/build.py --toolchain /path/to/bin --out build/usb-helper
 python3 -m unittest discover -s usb-helper/tests -p '*_test.py'
 ```
 
-`build/usb-helper/upload.dfu` is the IMG1 image and `manifest.json` describes it (schema 3: BootROM hash, size, SHA-256, offsets of the nonce, config and cold-init slots). Both go into a bundle as the `usb_helper` component. `usb-helper/tests/fixtures/` holds one built image for the Rust and Python tests; it contains Rockbox and helper code only.
+`build/usb-helper/upload.dfu` is the IMG1 image and `manifest.json` describes it (schema 3: BootROM hash, size, SHA-256, offsets of the nonce, config and cold-init slots, and the `storage_inspection` and `file_removal` capabilities). Both go into a bundle as the `usb_helper` component. `usb-helper/tests/fixtures/` holds one built image for the Rust and Python tests; it contains Rockbox and helper code only.
 
 ## Desktop app
 
@@ -78,7 +78,11 @@ pnpm check            # typecheck, biome lint and frontend tests
 pnpm tauri build      # bundles under ../target/release/bundle
 ```
 
-Install flow: disclaimer, IPSW selection, USB permissions on Linux, DFU detection, device checks, NOR backup, firmware assembly, upload and bootloader install. Backups and assembled firmware are written under the app data directory for `org.revolaos.installer`. The About screen shows the NOTICE text and the version.
+Install flow: disclaimer, IPSW selection, USB permissions on Linux, DFU detection, device checks, NOR backup, firmware assembly, upload and bootloader install.
+
+Uninstall flow: package download (no IPSW), DFU detection, device checks, NOR backup, file removal, then the Rockbox dual-boot uninstaller, which moves Apple's bootloader back into place. Files go first because the RevolaOS bootloader stops when they are missing. The uninstaller is the optional `uninstaller` file of the bundle's `nor` component, built by `mks5lboot --mkdfu-uninst ipod6g`.
+
+Backups and assembled firmware are written under the app data directory for `org.revolaos.installer`. The About screen shows the NOTICE text and the version.
 
 Release bundles are fetched from the newest published release of `RevolaOS/revola` (`<target>-manifest.json` asset) and verified with the ed25519 key in `app/src-tauri/src/package.rs`; `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override both at build time. Installer updates come from `RevolaOS/installer` releases through the Tauri updater; the matching minisign public key is in `tauri.conf.json`.
 

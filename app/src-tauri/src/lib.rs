@@ -44,6 +44,7 @@ pub fn run() {
             firmware::choose_firmware,
             firmware::cached_firmware,
             install::install,
+            install::uninstall::uninstall,
             install::diagnostics::save_debug_zip,
             updates::check_installer_update,
             updates::install_installer_update,

@@ -215,7 +215,7 @@ fn inspect_bulk(
         log(status.summary());
         if status.state() != COMPLETE {
             return Err(invalid(format!(
-                "Storage inspection did not complete: state={}",
+                "Storage helper did not complete: state={}",
                 status.state()
             )));
         }
@@ -454,6 +454,14 @@ pub struct StorageReport {
     pub osos_exists: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RemovalReport {
+    pub companion: bool,
+    pub osos: bool,
+    pub extensions: bool,
+    pub staged_uploads: bool,
+}
+
 impl Session {
     /// Inspect the data volume, then recover the nonce-verified DFU session.
     pub fn inspect_storage(
@@ -476,17 +484,76 @@ impl Session {
     /// Save successful sector reads in an existing directory, including failed inspections.
     /// Diagnostic failures are logged without preventing helper cleanup.
     pub fn inspect_storage_with_diagnostics(
-        mut self,
+        self,
         helper: &UploadHelper,
         required_bytes: u32,
         directory: Option<&std::path::Path>,
         mut log: impl FnMut(String),
     ) -> Result<(Self, StorageReport)> {
-        helper.validate_platform()?;
-        if !helper.storage_inspection || !self.operation_ready || self.info.port_path.is_empty() {
+        if !helper.storage_inspection {
+            return Err(invalid("Storage inspection requires a current helper"));
+        }
+        log(format!(
+            "Starting storage helper; required free space: {required_bytes} bytes"
+        ));
+        self.run_storage_helper(helper, 2, required_bytes, directory, log, |data| {
+            let report = StorageReport {
+                first_sector: quad(data, 0),
+                end_sector: quad(data, 8),
+                free_bytes: quad(data, 16),
+                sector_bytes: word(data, 24),
+                companion_exists: word(data, 28) & 1 != 0,
+                osos_exists: word(data, 28) & 2 != 0,
+            };
+            if report.first_sector >= report.end_sector
+                || report.free_bytes < u64::from(required_bytes)
+            {
+                return Err(invalid("Invalid storage inspection result"));
+            }
+            Ok(report)
+        })
+    }
+
+    /// Delete the RevolaOS files from the data volume, then recover the nonce-verified
+    /// DFU session. Files that are already missing are not an error.
+    pub fn remove_files_with_log(
+        self,
+        helper: &UploadHelper,
+        directory: Option<&std::path::Path>,
+        mut log: impl FnMut(String),
+    ) -> Result<(Self, RemovalReport)> {
+        if !helper.file_removal {
             return Err(invalid(
-                "Storage inspection requires a current helper and checked DFU session",
+                "This package's upload helper cannot remove files. Choose a newer package.",
             ));
+        }
+        log("Starting file removal helper".into());
+        self.run_storage_helper(helper, 3, 0, directory, log, |data| {
+            let removed = word(data, 28);
+            if quad(data, 0) >= quad(data, 8) || removed > 15 {
+                return Err(invalid("Invalid file removal result"));
+            }
+            Ok(RemovalReport {
+                companion: removed & 1 != 0,
+                osos: removed & 2 != 0,
+                extensions: removed & 4 != 0,
+                staged_uploads: removed & 8 != 0,
+            })
+        })
+    }
+
+    fn run_storage_helper<T>(
+        mut self,
+        helper: &UploadHelper,
+        mode: u32,
+        required_bytes: u32,
+        directory: Option<&std::path::Path>,
+        mut log: impl FnMut(String),
+        parse: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Result<(Self, T)> {
+        helper.validate_platform()?;
+        if !self.operation_ready || self.info.port_path.is_empty() {
+            return Err(invalid("Storage helper requires a checked DFU session"));
         }
         let mut nonce = [0; 16];
         getrandom::fill(&mut nonce).map_err(|e| invalid(e.to_string()))?;
@@ -494,19 +561,16 @@ impl Session {
             .verified_rom
             .as_deref()
             .ok_or_else(|| invalid("Missing checked BootROM"))?;
-        let image = helper.prepare_inspection(rom, &nonce, required_bytes)?;
+        let image = helper.prepare_storage(rom, &nonce, required_bytes, mode)?;
         let info = self.info.clone();
         let verified_rom = self.verified_rom.take();
-        log(format!(
-            "Starting storage helper; required free space: {required_bytes} bytes"
-        ));
         let (launch, _) = self.launch_helper(&image, || {});
         let operation = launch.and_then(|()| {
             let mut bulk = open_bulk(&info, helper.usb, &mut log)?;
             inspect_bulk(&mut bulk, &nonce, required_bytes, directory, &mut log)
         });
         if let Err(error) = &operation {
-            log(format!("Storage inspection failed: {error}"));
+            log(format!("Storage helper failed: {error}"));
         }
         log("Waiting up to 45s for nonce-verified DFU return".into());
         let (mut session, record) = returned(&info, &nonce).map_err(|error| match &operation {
@@ -541,22 +605,7 @@ impl Session {
                 )));
             }
             session.verify_helper_result(&status, &nonce, required_bytes, "Storage")?;
-            let data = session.dfu.read_memory(0x2201fbc0, 32)?;
-            let quad = |offset| u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-            let report = StorageReport {
-                first_sector: quad(0),
-                end_sector: quad(8),
-                free_bytes: quad(16),
-                sector_bytes: word(&data, 24),
-                companion_exists: word(&data, 28) & 1 != 0,
-                osos_exists: word(&data, 28) & 2 != 0,
-            };
-            if report.first_sector >= report.end_sector
-                || report.free_bytes < u64::from(required_bytes)
-            {
-                return Err(invalid("Invalid storage inspection result"));
-            }
-            Ok(report)
+            parse(&session.dfu.read_memory(0x2201fbc0, 32)?)
         })();
         let cleanup = session.return_to_idle();
         if let Err(error) = cleanup {
@@ -572,6 +621,10 @@ impl Session {
         session.operation_ready = true;
         Ok((session, report))
     }
+}
+
+fn quad(data: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
 #[cfg(test)]

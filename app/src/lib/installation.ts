@@ -47,11 +47,15 @@ const labels: Record<string, string> = {
   uploadLoader: "Uploading companion loader",
   uploadOsos: "Uploading RevolaOS",
   uploadExtensions: "Uploading extensions",
-  bootloader: "Preparing bootloader installer",
+  removeFiles: "Removing RevolaOS files",
+  bootloader: "Preparing bootloader",
   restart: "Restarting iPod",
 };
 
+type Outcome = "installer_sent" | "files_updated" | "uninstaller_sent" | "files_removed";
+
 interface InstallationState {
+  operation: "install" | "uninstall";
   running: boolean;
   startedAt: number;
   finishedAt: number | null;
@@ -59,10 +63,11 @@ interface InstallationState {
   error: string | null;
   complete: boolean;
   cancelling: boolean;
-  outcome: "installer_sent" | "files_updated" | null;
+  outcome: Outcome | null;
 }
 
 let state: InstallationState = {
+  operation: "install",
   running: false,
   startedAt: 0,
   finishedAt: null,
@@ -92,9 +97,35 @@ export function installationLabel(event: InstallEvent) {
 
 let nextJobId = 0;
 
+const completions: Record<Outcome, string> = {
+  files_updated:
+    "COMPLETE: disk files verified; bootloader unchanged; restart requested; boot not verified.",
+  installer_sent:
+    "BOOTLOADER HANDOFF: disk files verified; bootloader installer sent; NOR completion not read back.",
+  files_removed:
+    "COMPLETE: disk files removed; Apple bootloader unchanged; restart requested; boot not verified.",
+  uninstaller_sent:
+    "BOOTLOADER HANDOFF: disk files removed; bootloader uninstaller sent; NOR completion not read back.",
+};
+
 export function startInstallation(firmware: FirmwareInfo, packageDigest: string) {
+  appendSessionLog("Install/update started; checking device state to select the operation.");
+  startJob("install", "install", { firmwareSha256: firmware.sha256, packageDigest });
+}
+
+export function startUninstall(packageDigest: string) {
+  appendSessionLog("Uninstall started.");
+  startJob("uninstall", "uninstall", { packageDigest });
+}
+
+function startJob(
+  operation: InstallationState["operation"],
+  command: string,
+  args: Record<string, unknown>,
+) {
   if (state.running) return;
   publish({
+    operation,
     running: true,
     startedAt: Date.now(),
     finishedAt: null,
@@ -104,11 +135,10 @@ export function startInstallation(firmware: FirmwareInfo, packageDigest: string)
     cancelling: false,
     outcome: null,
   });
-  appendSessionLog("Install/update started; checking device state to select the operation.");
   const jobId = ++nextJobId;
   let lastDetail = "";
   const run = async () => {
-    if (!backendAvailable()) throw new Error("Open the desktop installer to install RevolaOS.");
+    if (!backendAvailable()) throw new Error("Open the desktop installer to change your iPod.");
     const channel = createChannel<InstallEvent>();
     channel.onmessage = (event) => {
       if (!state.running || jobId !== nextJobId) return;
@@ -124,22 +154,14 @@ export function startInstallation(firmware: FirmwareInfo, packageDigest: string)
     };
     return invoke<{
       backup_path: string;
-      outcome: "installer_sent" | "files_updated";
-      operation: "install" | "update";
-    }>("install", {
-      firmwareSha256: firmware.sha256,
-      packageDigest,
-      onEvent: channel,
-    });
+      outcome: Outcome;
+      operation: "install" | "update" | "uninstall";
+    }>(command, { ...args, onEvent: channel });
   };
   void run()
     .then((result) => {
-      const completion =
-        result.outcome === "files_updated"
-          ? "COMPLETE: disk files verified; bootloader unchanged; restart requested; boot not verified."
-          : "BOOTLOADER HANDOFF: disk files verified; bootloader installer sent; NOR completion not read back.";
       appendSessionLog(
-        `${result.operation.toUpperCase()} ${completion} Backups and logs: ${result.backup_path}`,
+        `${result.operation.toUpperCase()} ${completions[result.outcome]} Backups and logs: ${result.backup_path}`,
       );
       publish({
         ...state,
@@ -151,7 +173,9 @@ export function startInstallation(firmware: FirmwareInfo, packageDigest: string)
     })
     .catch((error: unknown) => {
       const detail = errorDetail(error);
-      appendSessionLog(`Installation stopped: ${detail}`);
+      appendSessionLog(
+        `${operation === "install" ? "Installation" : "Uninstall"} stopped: ${detail}`,
+      );
       publish({ ...state, running: false, error: detail, finishedAt: Date.now() });
     });
 }

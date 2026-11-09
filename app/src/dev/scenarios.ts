@@ -216,6 +216,13 @@ export const scenarios: Scenario[] = [
     packageError: "Firmware manifest signature verification failed.",
   },
   {
+    id: "uninstall",
+    group: "Installation",
+    label: "Uninstall",
+    screen: "uninstall",
+    hint: "Continue, then follow the DFU and check screens to simulate removal.",
+  },
+  {
     id: "installation-success",
     group: "Installation",
     label: "Progress to success",

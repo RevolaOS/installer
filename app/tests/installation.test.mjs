@@ -8,6 +8,7 @@ import {
   getInstallationState,
   installationLabel,
   startInstallation,
+  startUninstall,
 } from "../src/lib/installation.ts";
 import { getSessionLog } from "../src/lib/sessionLog.ts";
 
@@ -129,6 +130,24 @@ test("disk-only update logs its outcome without claiming a bootloader install", 
   assert.match(log, /UPDATE COMPLETE/);
   assert.match(log, /bootloader unchanged; restart requested/);
   assert.doesNotMatch(log, /BOOTLOADER HANDOFF/);
+});
+
+test("uninstall sends only the package and logs the bootloader handoff", async () => {
+  mockIPC((command, args) => {
+    assert.equal(command, "uninstall");
+    assert.equal(args.packageDigest, "package-hash");
+    assert.equal(args.firmwareSha256, undefined);
+    return { backup_path: "/backups/remove", operation: "uninstall", outcome: "uninstaller_sent" };
+  });
+  const first = getSessionLog().length;
+  startUninstall("package-hash");
+  await setImmediate();
+  assert.equal(getInstallationState().operation, "uninstall");
+  assert.equal(getInstallationState().outcome, "uninstaller_sent");
+  assert.match(
+    getSessionLog().slice(first).join("\n"),
+    /UNINSTALL BOOTLOADER HANDOFF: disk files removed/,
+  );
 });
 
 test("channel creation failure stops the job and allows retry", async () => {

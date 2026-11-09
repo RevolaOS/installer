@@ -12,8 +12,9 @@ export async function chooseLocalPackage(): Promise<PackageInfo | null> {
   return invoke<PackageInfo | null>("choose_local_package");
 }
 
+/** Without firmware (uninstall) the package must match the supported Apple firmware. */
 export async function preparePackage(
-  firmwareSha256: string,
+  firmwareSha256: string | null,
   localPackage: PackageInfo | null,
 ): Promise<PackageInfo> {
   if (!backendAvailable()) throw new Error("Open the desktop installer to load a package.");

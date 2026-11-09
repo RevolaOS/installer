@@ -6,6 +6,7 @@ import { InstallerScreen } from "./ui/InstallerScreen";
 
 interface IMainScreenProps {
   onInstall: () => void;
+  onUninstall: () => void;
   onAbout: () => void;
   installDisabled?: boolean;
   updates: React.ReactNode;
@@ -13,6 +14,7 @@ interface IMainScreenProps {
 
 const MainScreen: React.FC<IMainScreenProps> = ({
   onInstall,
+  onUninstall,
   onAbout,
   installDisabled,
   updates,
@@ -29,6 +31,12 @@ const MainScreen: React.FC<IMainScreenProps> = ({
           title="Install/Update RevolaOS"
           description="Install or update RevolaOS on your iPod."
           onClick={onInstall}
+          disabled={installDisabled}
+        />
+        <ChoiceButton
+          title="Uninstall RevolaOS"
+          description="Remove RevolaOS and restore Apple’s bootloader."
+          onClick={onUninstall}
           disabled={installDisabled}
         />
       </InstallerScreen.Actions>

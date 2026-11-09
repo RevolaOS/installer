@@ -240,6 +240,23 @@ fn nor_template_requires_dual_boot_packaging() {
 }
 
 #[test]
+fn nor_uninstaller_is_optional_and_checked() {
+    let fixture = crate::tests::Fixture::new();
+    let mut bundle = VerifiedBundle::load(fixture.dir.path(), &fixture.key, "0.2.0").unwrap();
+    assert!(nor_uninstaller(&bundle).is_err());
+    let mut image = vec![0; 0x800];
+    image[..8].copy_from_slice(b"87021.0\x03");
+    for (image, accepted) in [
+        (image.clone(), true),
+        (image[..0x7ff].to_vec(), false),
+        ([b"87021.0\x02".as_slice(), &image[8..]].concat(), false),
+    ] {
+        component(&mut bundle, "nor", &[("uninstaller", image)]);
+        assert_eq!(nor_uninstaller(&bundle).is_ok(), accepted);
+    }
+}
+
+#[test]
 #[ignore = "requires a local distribution ZIP and saved Apple inputs"]
 fn local_distribution_replays_from_saved_inputs() {
     let path = |name| std::path::PathBuf::from(std::env::var_os(name).expect(name));

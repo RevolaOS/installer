@@ -471,6 +471,24 @@ fn helper_validation_rejects_old_images_and_invalid_slots() {
 }
 
 #[test]
+fn removal_needs_the_helper_manifest_flag() {
+    let mut image = vec![0; 0xe00];
+    image[..8].copy_from_slice(b"87021.0\x02");
+    put(&mut image, 12, 0x600);
+    image[0x800..0x810].copy_from_slice(b"REPRISE-NONCE-01");
+    image[0x810..0x820].copy_from_slice(b"REPRISE-UPLOAD2\0");
+    image[0xa00..0xa10].copy_from_slice(COLD_INIT_TAG);
+    let mut m = serde_json::json!({"schema":3,"mode":"stream-file","rom_sha256":firmware::current().compatibility.bootrom_sha256,
+        "bytes":image.len(),"sha256":format!("{:x}",Sha256::digest(&image)),
+        "nonce_offset":0x800,"config_offset":0x810,"cold_init_offset":0xa00});
+    let helper = UploadHelper::from_bytes(&image, &serde_json::to_vec(&m).unwrap()).unwrap();
+    assert!(!helper.supports_file_removal());
+    m["file_removal"] = true.into();
+    let helper = UploadHelper::from_bytes(&image, &serde_json::to_vec(&m).unwrap()).unwrap();
+    assert!(helper.supports_file_removal());
+}
+
+#[test]
 fn reset_relocation_preserves_branches_and_skips_literal_pool() {
     let mut rom = vec![0; crate::BOOTROM_SIZE];
     // Both branch directions, the continuation, and the last possible literal load.

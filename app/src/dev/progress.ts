@@ -45,6 +45,42 @@ export async function simulateInstallation(
   };
 }
 
+const uninstallStages = [
+  ["checkBootloader", "Checking installed bootloader"],
+  ["backup", "Backing up boot firmware"],
+  ["removeFiles", "Removing RevolaOS files"],
+  ["bootloader", "Sending bootloader uninstaller"],
+] as const;
+
+export async function simulateUninstall(
+  scenario: Scenario,
+  channel: EventChannel<InstallEvent>,
+  wait: Wait,
+  cancelled: () => boolean,
+) {
+  for (const [stage, detail] of uninstallStages) {
+    for (const completed of [0, 50, 100]) {
+      channel.onmessage({
+        stage,
+        detail,
+        completed,
+        total: 100,
+        cancellable: stage !== "bootloader",
+      });
+      await wait();
+      if (cancelled()) throw new Error("Installation cancelled. Return to DFU mode to try again.");
+      if (scenario.installFailure?.stage === stage && completed === 50) {
+        throw new Error(scenario.installFailure.detail);
+      }
+    }
+  }
+  return {
+    operation: "uninstall",
+    outcome: "uninstaller_sent",
+    backup_path: "Simulated backup (no files written)",
+  };
+}
+
 export async function simulateUpdate(
   scenario: Scenario,
   channel: EventChannel<UpdateProgress>,

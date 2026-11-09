@@ -83,6 +83,86 @@ void upload_close(void)
     ata_sleepnow();
 }
 
+#define REMOVE_DEPTH 8
+static char tree[256];
+
+static bool staged_name(const char *name)
+{
+    size_t n = strlen(name);
+    return n > 14 && !strncasecmp(name, ".reprise-", 9) && !strcasecmp(name + n - 5, ".part");
+}
+
+/* Append the first child of tree[length] to tree. Returns 1 for a directory, 0 for a
+   file, -1 when none is left and -2 on error. The directory is closed before the
+   caller deletes anything. */
+static int first_child(size_t length, bool staged)
+{
+    DIR *dir = opendir(length ? tree : "/");
+    if (!dir)
+        return -2;
+    int kind = -1;
+    struct DIRENT *entry;
+    while ((entry = readdir(dir))) {
+        const char *name = entry->d_name;
+        if (!strcmp(name, ".") || !strcmp(name, "..") || (staged && !staged_name(name)))
+            continue;
+        size_t n = strlen(name);
+        if (length + 1 + n >= sizeof(tree)) {
+            kind = -2;
+            break;
+        }
+        tree[length] = '/';
+        memcpy(tree + length + 1, name, n + 1);
+        kind = dir_get_info(dir, entry).attribute & ATTR_DIRECTORY ? 1 : 0;
+        break;
+    }
+    if (closedir(dir))
+        kind = -2;
+    return kind;
+}
+
+static int remove_tree(size_t length, unsigned depth)
+{
+    for (int kind; (kind = first_child(length, false)) != -1; tree[length] = 0) {
+        if (kind == -2 || (kind == 1 && (depth == REMOVE_DEPTH ||
+                                         remove_tree(strlen(tree), depth + 1))) ||
+            (kind == 0 && remove(tree)))
+            return -1;
+    }
+    return rmdir(tree);
+}
+
+/* Reports what was deleted in existing_files: bit 0 companion, bit 1 OSOS,
+   bit 2 /Revola, bit 3 staged uploads. Missing entries are not an error. */
+static void remove_installation(void)
+{
+    static const char *const files[] = {"/cfw-loader.bin", "/osos-cfw.bin"};
+    writes_enabled = true;
+    for (unsigned i = 0; i < 2; ++i)
+        if (file_exists(files[i])) {
+            if (remove(files[i])) {
+                upload_fail(-330);
+                return;
+            }
+            STORAGE_RESULT->existing_files |= 1u << i;
+        }
+    strcpy(tree, "/Revola");
+    if (dir_exists(tree)) {
+        if (remove_tree(strlen(tree), 0)) {
+            upload_fail(-331);
+            return;
+        }
+        STORAGE_RESULT->existing_files |= 4;
+    }
+    for (int kind; (kind = first_child(0, true)) != -1;) {
+        if (kind != 0 || remove(tree)) {
+            upload_fail(-332);
+            return;
+        }
+        STORAGE_RESULT->existing_files |= 8;
+    }
+}
+
 /* Layout is checked by the helper before calling this function. */
 void upload_prepare(uint64_t start, uint64_t end, unsigned bytes)
 {
@@ -91,7 +171,7 @@ void upload_prepare(uint64_t start, uint64_t end, unsigned bytes)
         path[i] = upload_config.path[i];
     UPLOAD_RESULT->size = upload_config.size;
     if (!path_valid(path) || !strncasecmp(path, "/.reprise-", 10) ||
-        upload_config.size > UPLOAD_LIMIT || upload_config.overwrite > 2) {
+        upload_config.size > UPLOAD_LIMIT || upload_config.overwrite > 3) {
         upload_fail(-302);
         return;
     }
@@ -119,19 +199,25 @@ void upload_prepare(uint64_t start, uint64_t end, unsigned bytes)
     data_start = start;
     data_end = end;
     sector_t free_kib;
+    /* Removal must work on a full disk. */
     if (!fat_size(IF_MV(0, ) NULL, &free_kib) ||
-        (uint64_t)free_kib * 1024 <
-            (uint64_t)upload_config.size + fat_get_cluster_size(IF_MV(0))) {
+        (upload_config.overwrite != 3 &&
+         (uint64_t)free_kib * 1024 <
+             (uint64_t)upload_config.size + fat_get_cluster_size(IF_MV(0)))) {
         upload_fail(-322);
         return;
     }
-    if (upload_config.overwrite == 2) {
+    if (upload_config.overwrite >= 2) {
         STORAGE_RESULT->start = start;
         STORAGE_RESULT->end = end;
         STORAGE_RESULT->free_bytes = (uint64_t)free_kib * 1024;
         STORAGE_RESULT->sector_bytes = bytes;
-        STORAGE_RESULT->existing_files =
-            file_exists("/cfw-loader.bin") | (file_exists("/osos-cfw.bin") << 1);
+        STORAGE_RESULT->existing_files = 0;
+        if (upload_config.overwrite == 2)
+            STORAGE_RESULT->existing_files =
+                file_exists("/cfw-loader.bin") | (file_exists("/osos-cfw.bin") << 1);
+        else
+            remove_installation();
         UPLOAD_RESULT->state = 4;
         return;
     }

@@ -27,7 +27,7 @@ pub(super) fn backup(
     job.log(if action == assembly::BootloaderAction::Keep {
         "BACKUP: no valid backup for this device; reading full NOR"
     } else {
-        "BACKUP: fresh full NOR snapshot required before bootloader installation"
+        "BACKUP: fresh full NOR snapshot required before the bootloader changes"
     });
     let nor = session.dump_nor(|p| {
         let detail = match p.stage {

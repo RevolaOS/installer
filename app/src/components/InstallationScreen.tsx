@@ -44,10 +44,15 @@ const InstallationScreen: React.FC<IInstallationScreenProps> = ({ onComplete, on
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [state.running]);
+  const uninstall = state.operation === "uninstall";
   const elapsed = Math.max(0, (state.finishedAt ?? now) - state.startedAt);
   const snapshot = {
     id: `${state.event.stage}:${installationLabel(state.event)}`,
-    label: state.error ? "Installation stopped" : installationLabel(state.event),
+    label: state.error
+      ? uninstall
+        ? "Uninstall stopped"
+        : "Installation stopped"
+      : installationLabel(state.event),
     complete: state.complete,
     percentage:
       state.event.total && state.event.completed !== null
@@ -64,7 +69,13 @@ const InstallationScreen: React.FC<IInstallationScreenProps> = ({ onComplete, on
   return (
     <InstallerScreen.Root aria-labelledby="installation-title">
       <InstallerScreen.Title id="installation-title" ref={headingRef} tabIndex={-1}>
-        {state.error ? "Installation stopped." : "Installing RevolaOS."}
+        {state.error
+          ? uninstall
+            ? "Uninstall stopped."
+            : "Installation stopped."
+          : uninstall
+            ? "Removing RevolaOS."
+            : "Installing RevolaOS."}
       </InstallerScreen.Title>
       <div className="mx-auto mt-6 max-w-112">
         <InstallationProgress

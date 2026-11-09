@@ -10,10 +10,11 @@ import { InstallationScreen } from "./components/InstallationScreen";
 import { InstallerUpdates } from "./components/InstallerUpdates";
 import { MainScreen } from "./components/MainScreen";
 import { SuccessScreen } from "./components/SuccessScreen";
+import { UninstallScreen } from "./components/UninstallScreen";
 import { UsbPermissionsScreen } from "./components/UsbPermissionsScreen";
 import { DebugLog } from "./components/ui/DebugLog";
 import { startDeviceChecks } from "./lib/deviceChecks";
-import { type FirmwareInfo, startInstallation } from "./lib/installation";
+import { type FirmwareInfo, startInstallation, startUninstall } from "./lib/installation";
 import type { PackageInfo } from "./lib/package";
 import { appendSessionLog, getSessionLog, subscribeToSessionLog } from "./lib/sessionLog";
 import { getUpdateState, subscribeToUpdates, updateIsBusy } from "./lib/updates";
@@ -23,6 +24,7 @@ export type Screen =
   | "main"
   | "disclaimer"
   | "firmware"
+  | "uninstall"
   | "permissions"
   | "dfu"
   | "checks"
@@ -47,15 +49,19 @@ const App: React.FC<AppProps> = ({ initial }) => {
     initial?.localPackage ?? null,
   );
   const [packageDigest, setPackageDigest] = React.useState(initial?.packageDigest ?? "");
+  const [mode, setMode] = React.useState<"install" | "uninstall">("install");
   const logs = React.useSyncExternalStore(subscribeToSessionLog, getSessionLog);
   const reducedMotion = useReducedMotion();
   const scrollRef = React.useRef<HTMLElement>(null);
 
-  const beginInstall = () => {
-    if (!firmware || !packageDigest) return;
-    startInstallation(firmware, packageDigest);
+  const begin = () => {
+    if (!packageDigest) return;
+    if (mode === "uninstall") startUninstall(packageDigest);
+    else if (firmware) startInstallation(firmware, packageDigest);
+    else return;
     setScreen("installation");
   };
+  const packageScreen = mode === "uninstall" ? "uninstall" : "firmware";
 
   return (
     <main
@@ -81,10 +87,17 @@ const App: React.FC<AppProps> = ({ initial }) => {
                 onAbout={() => setScreen("about")}
                 onInstall={() => {
                   appendSessionLog("New setup started.");
+                  setMode("install");
                   setFirmware(null);
                   setLocalPackage(null);
                   setPackageDigest("");
                   setScreen("disclaimer");
+                }}
+                onUninstall={() => {
+                  appendSessionLog("Uninstall setup started.");
+                  setMode("uninstall");
+                  setPackageDigest("");
+                  setScreen("uninstall");
                 }}
               />
             ) : screen === "about" ? (
@@ -114,13 +127,21 @@ const App: React.FC<AppProps> = ({ initial }) => {
                 }}
                 onBack={() => setScreen("disclaimer")}
               />
+            ) : screen === "uninstall" ? (
+              <UninstallScreen
+                onContinue={(digest) => {
+                  setPackageDigest(digest);
+                  setScreen("permissions");
+                }}
+                onBack={() => setScreen("main")}
+              />
             ) : screen === "permissions" ? (
               <UsbPermissionsScreen
                 onContinue={() => {
                   appendSessionLog("Waiting for DFU connection.");
                   setScreen("dfu");
                 }}
-                onBack={() => setScreen("firmware")}
+                onBack={() => setScreen(packageScreen)}
               />
             ) : screen === "dfu" ? (
               <DfuScreen
@@ -131,11 +152,11 @@ const App: React.FC<AppProps> = ({ initial }) => {
               />
             ) : screen === "checks" ? (
               <DeviceChecksScreen
-                onContinue={beginInstall}
+                onContinue={begin}
                 onBack={() => setScreen("dfu")}
                 onChangeFirmware={() => {
                   setPackageDigest("");
-                  setScreen("firmware");
+                  setScreen(packageScreen);
                 }}
               />
             ) : screen === "installation" ? (

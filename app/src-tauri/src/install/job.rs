@@ -26,6 +26,8 @@ pub struct InstallEvent {
 pub(super) enum InstallOutcome {
     InstallerSent,
     FilesUpdated,
+    UninstallerSent,
+    FilesRemoved,
 }
 
 #[derive(Serialize)]
@@ -101,6 +103,23 @@ impl<'a> Job<'a> {
                 BootloaderAction::Upgrade => {
                     "UPDATE: bootloader differs from package; installing new bootloader after a fresh NOR backup"
                 }
+            },
+            None,
+        );
+        Ok(())
+    }
+
+    pub(super) fn plan_uninstall(&mut self, apple_bootloader: bool) -> Result<()> {
+        self.operation = Some("uninstall");
+        self.save_json(
+            "plan.json",
+            &serde_json::json!({"operation": "uninstall", "apple_bootloader": apple_bootloader}),
+        )?;
+        self.emit(
+            if apple_bootloader {
+                "UNINSTALL: Apple bootloader detected; removing RevolaOS files only"
+            } else {
+                "UNINSTALL: removing RevolaOS files, then restoring Apple's bootloader"
             },
             None,
         );
@@ -265,6 +284,10 @@ impl<'a> Job<'a> {
         self.begin_handoff("bootloader", "Preparing bootloader installer")
     }
 
+    pub(super) fn begin_bootloader_removal(&mut self) -> Result<()> {
+        self.begin_handoff("bootloader", "Preparing bootloader uninstaller")
+    }
+
     pub(super) fn begin_restart(&mut self) -> Result<()> {
         self.begin_handoff("restart", "Restarting iPod")
     }
@@ -290,6 +313,8 @@ impl<'a> Job<'a> {
                 self.log(match outcome {
                     InstallOutcome::FilesUpdated => "UPDATE COMPLETE: disk files verified; NOR unchanged; restart requested; boot not verified",
                     InstallOutcome::InstallerSent => "BOOTLOADER HANDOFF: disk files verified; NOR installer sent; NOR completion not read back",
+                    InstallOutcome::UninstallerSent => "UNINSTALL HANDOFF: disk files removed; NOR uninstaller sent; NOR completion not read back",
+                    InstallOutcome::FilesRemoved => "UNINSTALL COMPLETE: disk files removed; NOR unchanged; restart requested; boot not verified",
                 });
                 save_json(
                     &self.directory.join("result.json"),

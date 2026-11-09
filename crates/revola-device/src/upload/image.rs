@@ -22,6 +22,8 @@ struct Manifest {
     #[serde(default)]
     storage_inspection: bool,
     #[serde(default)]
+    file_removal: bool,
+    #[serde(default)]
     usb: UsbIdentity,
 }
 
@@ -44,7 +46,7 @@ impl Default for UsbIdentity {
 
 struct Config<'a> {
     size: u32,
-    // Wire field `overwrite`: 0 create, 1 replace, 2 inspect storage.
+    // Wire field `overwrite`: 0 create, 1 replace, 2 inspect storage, 3 remove RevolaOS.
     mode: u32,
     sha: &'a [u8; 32],
     destination: &'a str,
@@ -57,6 +59,7 @@ pub struct UploadHelper {
     pub(super) config_offset: usize,
     pub(super) cold_init_offset: usize,
     pub(super) storage_inspection: bool,
+    pub(super) file_removal: bool,
     pub(super) usb: UsbIdentity,
 }
 
@@ -105,6 +108,7 @@ impl UploadHelper {
             config_offset: m.config_offset,
             cold_init_offset: m.cold_init_offset,
             storage_inspection: m.storage_inspection,
+            file_removal: m.file_removal,
             usb: m.usb,
         })
     }
@@ -115,6 +119,10 @@ impl UploadHelper {
 
     pub fn supports_storage_inspection(&self) -> bool {
         self.storage_inspection
+    }
+
+    pub fn supports_file_removal(&self) -> bool {
+        self.file_removal
     }
 
     pub fn validate_platform(&self) -> Result<()> {
@@ -145,11 +153,13 @@ impl UploadHelper {
         )
     }
 
-    pub(super) fn prepare_inspection(
+    /// `mode` is 2 to inspect storage or 3 to remove RevolaOS files.
+    pub(super) fn prepare_storage(
         &self,
         rom: &[u8],
         nonce: &[u8; 16],
         size: u32,
+        mode: u32,
     ) -> Result<Vec<u8>> {
         self.prepare_config(
             rom,
@@ -158,7 +168,7 @@ impl UploadHelper {
                 size,
                 sha: &[0; 32],
                 destination: "/cfw-loader.bin",
-                mode: 2,
+                mode,
             },
         )
     }
