@@ -17,3 +17,7 @@ toolchains/
 *.bytes
 .DS_Store
 .claude/
+node_modules/
+dist/
+app/src-tauri/gen/
+!usb-helper/tests/fixtures/upload.dfu
