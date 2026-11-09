@@ -5,6 +5,7 @@ mod archive;
 pub mod assembly;
 mod distribution;
 pub mod export;
+pub mod extension;
 pub mod preparation;
 
 #[cfg(test)]
@@ -29,8 +30,7 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SCHEMA: u32 = 3;
 pub const EXTENSIONS_ROOT: &str = "/Revola/Extensions";
 pub const EXTENSION_FORMAT: &str = "revola-extension-v1";
-const RVX_MAGIC: &[u8; 4] = b"RVX0";
-const MAX_EXTENSION_FILES: usize = 16;
+const MAX_EXTENSION_FILES: usize = extension::MAX_MODULES + 1;
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
 #[derive(Debug, thiserror::Error)]
@@ -185,6 +185,14 @@ impl Manifest {
         if !self.extensions.is_empty() && self.core.is_none() {
             return Err(invalid("Extensions require the core profile"));
         }
+        if let Some(core) = &self.core {
+            let pinned = &revola_device::firmware::current().inputs["osos.bin"].sha256;
+            if core.firmware_build_id != extension::firmware_build_id(pinned)? {
+                return Err(invalid(
+                    "Bundle core profile is not built for the pinned firmware",
+                ));
+            }
+        }
         for (id, extension) in &self.extensions {
             if !valid_extension_id(id)
                 || extension.format != EXTENSION_FORMAT
@@ -263,13 +271,23 @@ impl VerifiedBundle {
         .check_extensions()
     }
 
-    /// Module images must start with the `.rvx` magic. The remaining header words are
-    /// checked once the loader fixes their order.
+    /// Each extension's `manifest.bin` must name exactly the module files in the package,
+    /// and every module header must match this bundle's core.
     fn check_extensions(self) -> Result<Self> {
-        for (id, extension) in &self.manifest.extensions {
-            for (name, hash) in &extension.files {
-                if name != "manifest.bin" && self.assets[hash].get(..4) != Some(RVX_MAGIC) {
-                    return Err(invalid(format!("{id}/{name} is not an rvx module")));
+        if let Some(core) = &self.manifest.core {
+            for (id, ext) in &self.manifest.extensions {
+                let names =
+                    extension::module_names(id, &self.assets[&ext.files["manifest.bin"]], core)?;
+                if ext.files.keys().cloned().collect::<BTreeSet<_>>()
+                    != extension::expected_files(&names)
+                {
+                    return Err(invalid(format!(
+                        "{id}: files differ from the manifest's modules"
+                    )));
+                }
+                for name in &names {
+                    let image = &self.assets[&ext.files[&format!("{name}.rvx")]];
+                    extension::check_module(id, name, image, core)?;
                 }
             }
         }
@@ -434,7 +452,7 @@ fn valid_extension_id(value: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
 }
 
-fn valid_module_name(value: &str) -> bool {
+pub(crate) fn valid_module_name(value: &str) -> bool {
     value.strip_suffix(".rvx").is_some_and(|stem| {
         !stem.is_empty()
             && stem
