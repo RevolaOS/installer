@@ -12,7 +12,7 @@ for kind, suffix in [("deb", ".deb"), ("rpm", ".rpm"), ("appimage", ".AppImage")
     assert len(matches) == 1, f"Expected one {kind} artifact, found {matches}"
     artifacts[kind] = matches[0]
 
-expected = pathlib.Path("src-tauri/linux/70-revolaos.rules").read_bytes()
+expected = (pathlib.Path(__file__).resolve().parents[1] / "src-tauri/linux/70-revolaos.rules").read_bytes()
 with tempfile.TemporaryDirectory() as directory:
     subprocess.run(["dpkg-deb", "--extract", str(artifacts["deb"]), directory], check=True)
     rule = pathlib.Path(directory) / "usr/lib/udev/rules.d/70-revolaos.rules"

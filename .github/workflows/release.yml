@@ -32,9 +32,17 @@ jobs:
             target: x86_64-pc-windows-msvc
             rust-targets: x86_64-pc-windows-msvc
             bundles: nsis
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            rust-targets: aarch64-pc-windows-msvc
+            bundles: nsis
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             rust-targets: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            rust-targets: aarch64-unknown-linux-gnu
             bundles: deb,rpm,appimage
     defaults:
       run:
@@ -166,19 +174,23 @@ jobs:
           release_assets = json.load(open("release.json"))["assets"]
           assets = {asset["name"] for asset in release_assets}
           api_assets = {asset["apiUrl"]: asset["name"] for asset in release_assets}
+          import fnmatch
+          # One macOS universal build, two Windows and two Linux architectures.
           required = {
-              "revola-installer_darwin_universal.dmg",
-              "revola-installer_darwin_universal.app.tar.gz",
-              "revola-installer_darwin_universal.app.tar.gz.sig",
-              "revola-installer_windows_x64-setup.exe",
-              "revola-installer_windows_x64-setup.exe.sig",
-              "revola-installer_windows_x64.exe",
-              "revola-installer_linux_amd64.deb",
-              "revola-installer_linux_x86_64.rpm",
-              "revola-installer_linux_amd64.AppImage",
-              "revola-installer_linux_amd64.AppImage.sig",
+              "revola-installer_darwin_universal.dmg": 1,
+              "revola-installer_darwin_universal.app.tar.gz": 1,
+              "revola-installer_darwin_universal.app.tar.gz.sig": 1,
+              "revola-installer_windows_*-setup.exe": 2,
+              "revola-installer_windows_*-setup.exe.sig": 2,
+              "revola-installer_windows_*.exe": 4,
+              "revola-installer_linux_*.deb": 2,
+              "revola-installer_linux_*.rpm": 2,
+              "revola-installer_linux_*.AppImage": 2,
+              "revola-installer_linux_*.AppImage.sig": 2,
           }
-          assert required <= assets, f"Missing release assets: {required - assets}"
+          for pattern, count in required.items():
+              found = fnmatch.filter(assets, pattern)
+              assert len(found) == count, f"Expected {count} assets matching {pattern}, found {found}"
           feed = json.load(open("latest.json"))
           tag = os.environ["RELEASE_TAG"]
           assert feed["version"].removeprefix("v") == tag.removeprefix("v")
@@ -190,7 +202,7 @@ jobs:
               assert platform["url"].startswith(prefix), f"Invalid updater URL: {target}"
               assert unquote(platform["url"].removeprefix(prefix)) in assets, target
               assert platform["signature"], target
-          for target in ("darwin-aarch64", "darwin-x86_64", "windows-x86_64"):
+          for target in ("darwin-aarch64", "darwin-x86_64", "windows-x86_64", "windows-aarch64"):
               platform = feed["platforms"].get(target + "-nsis") if target.startswith("windows") else None
               platform = platform or feed["platforms"].get(target)
               assert platform, f"Missing updater platform: {target}"
