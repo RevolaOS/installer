@@ -1,0 +1,201 @@
+name: Installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    environment: installer-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: universal-apple-darwin
+            rust-targets: aarch64-apple-darwin x86_64-apple-darwin
+            bundles: app,dmg
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            rust-targets: x86_64-pc-windows-msvc
+            bundles: nsis
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rust-targets: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: '8'
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Developer ID signing and notarization, same secrets as the other repositories.
+      # Tauri imports the certificate into a temporary keychain and runs notarytool.
+      APPLE_CERTIFICATE: ${{ startsWith(matrix.runner, 'macos-') && secrets.APPLE_CERT_P12_BASE64 || '' }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(matrix.runner, 'macos-') && secrets.APPLE_CERT_PASSWORD || '' }}
+      APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.runner, 'macos-') && secrets.APPLE_DEVELOPER_ID || '' }}
+      APPLE_ID: ${{ startsWith(matrix.runner, 'macos-') && secrets.APPLE_USERNAME || '' }}
+      APPLE_PASSWORD: ${{ startsWith(matrix.runner, 'macos-') && secrets.APPLE_PASSWORD || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check updater signing key
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::Set TAURI_SIGNING_PRIVATE_KEY in the installer-release environment."
+            exit 1
+          fi
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, pathlib, re
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          cargo = pathlib.Path("Cargo.toml").read_text()
+          assert re.search(r'^version = "([^"]+)"', cargo, re.M)[1] == version, "Cargo.toml"
+          PYTHON
+      - name: Check macOS signing credentials
+        if: runner.os == 'macOS'
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Set $name's secret in the installer-release environment."
+              exit 1
+            fi
+          done
+          team_id="$(printf '%s' "$APPLE_SIGNING_IDENTITY" | sed -n 's/.*(\(.*\)).*/\1/p')"
+          if [[ -z "$team_id" ]]; then
+            echo "::error::APPLE_DEVELOPER_ID does not contain a Team ID"
+            exit 1
+          fi
+          echo "::add-mask::$team_id"
+          printf 'APPLE_TEAM_ID=%s\n' "$team_id" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: '11.22.0'
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: app
+      - name: Check frontend
+        run: pnpm check
+        working-directory: app
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libudev-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+          rustup target add ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.target }}
+      - name: Test Linux backend
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - name: Build installers
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+          tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          releaseName: RevolaOS Installer ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generateReleaseNotes: true
+          releaseAssetNamePattern: '[mainBinaryName]_[platform]_[arch][setup][ext]'
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          uploadPlainBinary: ${{ runner.os == 'Windows' }}
+          uploadWorkflowArtifacts: true
+      - name: Verify macOS signature and notarization
+        if: runner.os == 'macOS'
+        run: |
+          app="target/${{ matrix.target }}/release/bundle/macos/RevolaOS Installer.app"
+          codesign --verify --strict --deep --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+      - name: Verify Linux package contents
+        if: runner.os == 'Linux'
+        run: |
+          python3 app/scripts/verify-linux-packages.py target/${{ matrix.target }}/release/bundle
+
+  verify-updater:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Normalize and verify update feed and website downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets > release.json
+          python3 - <<'PYTHON'
+          import json, os
+          from urllib.parse import quote, unquote
+          release_assets = json.load(open("release.json"))["assets"]
+          assets = {asset["name"] for asset in release_assets}
+          api_assets = {asset["apiUrl"]: asset["name"] for asset in release_assets}
+          required = {
+              "revola-installer_darwin_universal.dmg",
+              "revola-installer_darwin_universal.app.tar.gz",
+              "revola-installer_darwin_universal.app.tar.gz.sig",
+              "revola-installer_windows_x64-setup.exe",
+              "revola-installer_windows_x64-setup.exe.sig",
+              "revola-installer_windows_x64.exe",
+              "revola-installer_linux_amd64.deb",
+              "revola-installer_linux_x86_64.rpm",
+              "revola-installer_linux_amd64.AppImage",
+              "revola-installer_linux_amd64.AppImage.sig",
+          }
+          assert required <= assets, f"Missing release assets: {required - assets}"
+          feed = json.load(open("latest.json"))
+          tag = os.environ["RELEASE_TAG"]
+          assert feed["version"].removeprefix("v") == tag.removeprefix("v")
+          prefix = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}/"
+          for target, platform in feed["platforms"].items():
+              name = api_assets.get(platform["url"])
+              if name is not None:
+                  platform["url"] = prefix + quote(name, safe="")
+              assert platform["url"].startswith(prefix), f"Invalid updater URL: {target}"
+              assert unquote(platform["url"].removeprefix(prefix)) in assets, target
+              assert platform["signature"], target
+          for target in ("darwin-aarch64", "darwin-x86_64", "windows-x86_64"):
+              platform = feed["platforms"].get(target + "-nsis") if target.startswith("windows") else None
+              platform = platform or feed["platforms"].get(target)
+              assert platform, f"Missing updater platform: {target}"
+          with open("latest.json", "w") as output:
+              json.dump(feed, output, indent=2)
+              output.write("\n")
+          PYTHON
+          gh release upload "$RELEASE_TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
