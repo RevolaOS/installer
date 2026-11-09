@@ -8,12 +8,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev pkg-config python3 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable && rustup target add x86_64-pc-windows-msvc
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - run: cargo check -p revola-device -p revola-bundle -p revola-cli --target x86_64-pc-windows-msvc --locked
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p revola-device -p revola-bundle -p revola-cli --all-targets --features revola-device/vendored-usb --locked -- -D warnings
   helper:
     runs-on: ubuntu-24.04
     steps:
