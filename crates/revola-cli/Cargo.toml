@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[package]
+name = "revola-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "revola"
+path = "src/main.rs"
+
+[dependencies]
+revola-device = { path = "../revola-device" }
+revola-bundle = { path = "../revola-bundle" }
+serde.workspace = true
+serde_json.workspace = true
