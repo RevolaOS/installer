@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="logo-title logo-description">
+<title id="logo-title">Modular wheel logo - dark backgrounds</title>
+<desc id="logo-description">A bold circular wheel surrounds a solid core. One separate segment at the upper right represents an optional extension.</desc>
+<g id="stable-core" fill="#F5F4EF">
+  <path id="wheel" d="M 219.771 147.441 A 96 96 0 1 1 108.559 36.229 L 114.984 72.667 A 59 59 0 1 0 183.333 141.016 Z"/>
+  <circle id="core" cx="125.229" cy="130.771" r="24"/>
+</g>
+<path id="extension" fill="#88A6FF" d="M 148.899 29.229 A 96 96 0 0 1 226.771 107.101 L 190.333 113.526 A 59 59 0 0 0 142.474 65.667 Z"/>
+</svg>
