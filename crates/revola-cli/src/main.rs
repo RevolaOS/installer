@@ -57,7 +57,7 @@ Usage:
 upload streams through a 64 KiB buffer, verifies disk readback, then returns to DFU.
 Use a signed --bundle with its trusted --key, or a development --helper directory. Existing destination
 files require --overwrite; replacement happens after temporary-file verification.
-Files may have any byte length up to 2 GiB minus 1 byte; directories must exist.
+Files may have any byte length up to 2 GiB minus 1 byte; missing parent directories are created.
 
 decrypt reads the Classic IMG1 header and decrypts its entire encrypted body.
 Output contains the plaintext body, including final AES block padding.
