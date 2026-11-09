@@ -1,0 +1,332 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import type { Screen } from "../App";
+import type { CheckId, CompatibilityIssue } from "../lib/deviceChecks.ts";
+
+export interface Scenario {
+  id: string;
+  group: string;
+  label: string;
+  screen: Screen;
+  hint?: string;
+  discovery?: "absent" | "multiple" | "normal" | "denied";
+  usbSetup?: "required" | "denied" | "unavailable" | "waiting" | "checking" | "check-error";
+  checkFailure?: { id: CheckId; detail: string; model?: string; version?: string };
+  issue?: CompatibilityIssue;
+  cleanupFailure?: string;
+  firmwareError?: string;
+  localPackage?: boolean;
+  packageError?: string;
+  installFailure?: { stage: string; detail: string };
+  debugExport?: "native" | "cancel" | "error";
+  update?: "available" | "manual" | "current" | "check-error" | "download-error" | "installing";
+  startUpdate?: boolean;
+}
+
+export const scenarios: Scenario[] = [
+  {
+    id: "full-setup",
+    group: "Setup",
+    label: "Successful setup",
+    screen: "main",
+    usbSetup: "required",
+    hint: "Includes one-time Linux USB setup before DFU. All device operations and authentication are simulated.",
+  },
+  {
+    id: "unsupported-model",
+    group: "Compatibility",
+    label: "Unsupported model",
+    screen: "checks",
+    issue: { kind: "unsupported_model", model: "MA002" },
+    checkFailure: {
+      id: "model",
+      model: "MA002",
+      detail: "MA002; HwVr 0x000b0000 (unsupported target)",
+    },
+  },
+  {
+    id: "unknown-hardware",
+    group: "Compatibility",
+    label: "Unknown hardware: experimental install",
+    screen: "checks",
+    hint: "Install anyway reruns simulated checks, then continues installation. No device operations.",
+    issue: { kind: "unknown_hardware", model: "MB147", hardware_version: 0x02130000 },
+    checkFailure: {
+      id: "model",
+      model: "MB147",
+      detail: "MB147; HwVr 0x02130000 (unsupported target)",
+    },
+  },
+  {
+    id: "package-mismatch",
+    group: "Compatibility",
+    label: "Wrong package for iPod",
+    screen: "checks",
+    issue: { kind: "package_mismatch", model: "MC293" },
+    checkFailure: {
+      id: "version",
+      detail:
+        "The selected firmware package does not support this MC293 iPod. Choose a compatible Classic package.",
+    },
+  },
+  { id: "checks-passed", group: "Compatibility", label: "All checks passed", screen: "checks" },
+  { id: "no-device", group: "Connection", label: "No iPod", screen: "dfu", discovery: "absent" },
+  {
+    id: "usb-setup",
+    group: "Linux USB setup",
+    label: "Enable helper access",
+    screen: "permissions",
+    usbSetup: "required",
+    hint: "Enable iPod access simulates successful setup without requesting administrator privileges.",
+  },
+  {
+    id: "usb-setup-denied",
+    group: "Linux USB setup",
+    label: "Authentication cancelled",
+    screen: "permissions",
+    usbSetup: "denied",
+    hint: "The first attempt is cancelled. Retry to simulate successful authentication.",
+  },
+  {
+    id: "usb-setup-unavailable",
+    group: "Linux USB setup",
+    label: "Authentication unavailable",
+    screen: "permissions",
+    usbSetup: "unavailable",
+    hint: "Enable iPod access fails because administrator authentication is unavailable.",
+  },
+  {
+    id: "usb-setup-waiting",
+    group: "Linux USB setup",
+    label: "Waiting for authentication",
+    screen: "permissions",
+    usbSetup: "waiting",
+    hint: "Enable iPod access stays pending so you can inspect the disabled buttons. Replay to reset.",
+  },
+  {
+    id: "usb-setup-checking",
+    group: "Linux USB setup",
+    label: "Checking access",
+    screen: "permissions",
+    usbSetup: "checking",
+    hint: "The initial access check stays pending. Replay to reset.",
+  },
+  {
+    id: "usb-setup-check-error",
+    group: "Linux USB setup",
+    label: "Access check failed",
+    screen: "permissions",
+    usbSetup: "check-error",
+    hint: "The initial check fails. Enable iPod access still allows setup to recover.",
+  },
+  {
+    id: "usb-setup-ready",
+    group: "Linux USB setup",
+    label: "Access already enabled",
+    screen: "permissions",
+    hint: "Automatically advances to DFU, as on an already configured system or another OS.",
+  },
+  {
+    id: "multiple-devices",
+    group: "Connection",
+    label: "Multiple iPods",
+    screen: "dfu",
+    discovery: "multiple",
+  },
+  {
+    id: "not-dfu",
+    group: "Connection",
+    label: "iPod outside DFU",
+    screen: "dfu",
+    discovery: "normal",
+  },
+  {
+    id: "discovery-denied",
+    group: "Connection",
+    label: "Discovery access denied",
+    screen: "dfu",
+    discovery: "denied",
+  },
+  {
+    id: "usb-denied",
+    group: "Connection",
+    label: "USB permission denied",
+    screen: "checks",
+    checkFailure: {
+      id: "access",
+      detail: "USB access denied. Close other iPod tools and check the USB driver, then try again.",
+    },
+  },
+  {
+    id: "disconnected",
+    group: "Connection",
+    label: "Disconnected during checks",
+    screen: "checks",
+    checkFailure: {
+      id: "rom",
+      detail: "The iPod disconnected. Return to the DFU guide and reconnect it.",
+    },
+  },
+  {
+    id: "cleanup-failed",
+    group: "Connection",
+    label: "DFU cleanup failed",
+    screen: "checks",
+    cleanupFailure: "The iPod did not return to idle DFU. Reconnect your iPod in DFU mode.",
+  },
+  {
+    id: "local-package",
+    group: "Firmware and downloads",
+    label: "Local package selected",
+    screen: "firmware",
+    localPackage: true,
+    hint: "Continue with the local package, change it, or switch to automatic download.",
+  },
+  {
+    id: "invalid-ipsw",
+    group: "Firmware and downloads",
+    label: "Unsupported IPSW",
+    screen: "firmware",
+    hint: "Choose file to simulate validation failure.",
+    firmwareError: "Choose iPod_38.2.0.5.ipsw (Apple 2.0.5).",
+  },
+  {
+    id: "download-offline",
+    group: "Firmware and downloads",
+    label: "Package download failed",
+    screen: "firmware",
+    hint: "Continue to simulate the package download.",
+    packageError:
+      "Could not download the firmware package. Check your internet connection and try again.",
+  },
+  {
+    id: "release-incompatible",
+    group: "Firmware and downloads",
+    label: "Installer too old",
+    screen: "firmware",
+    hint: "Continue to check release compatibility.",
+    packageError:
+      "This firmware release requires installer 0.2.0 or newer. Update the RevolaOS installer, then try again.",
+  },
+  {
+    id: "signature-invalid",
+    group: "Firmware and downloads",
+    label: "Invalid package signature",
+    screen: "firmware",
+    hint: "Continue or choose a local package to simulate verification failure.",
+    packageError: "Firmware manifest signature verification failed.",
+  },
+  {
+    id: "installation-success",
+    group: "Installation",
+    label: "Progress to success",
+    screen: "installation",
+  },
+  {
+    id: "debug-export",
+    group: "Installation",
+    label: "Save debug ZIP",
+    screen: "installation",
+    debugExport: "native",
+    hint: "In the desktop dev app, Save debug ZIP opens the native dialog and writes synthetic diagnostics. No iPod needed.",
+    installFailure: { stage: "storage", detail: "Invalid FAT32 sector size (code -301)." },
+  },
+  {
+    id: "debug-export-cancel",
+    group: "Installation",
+    label: "Debug ZIP save cancelled",
+    screen: "installation",
+    debugExport: "cancel",
+    installFailure: { stage: "storage", detail: "Invalid FAT32 sector size (code -301)." },
+  },
+  {
+    id: "debug-export-error",
+    group: "Installation",
+    label: "Debug ZIP save failed",
+    screen: "installation",
+    debugExport: "error",
+    installFailure: { stage: "storage", detail: "Invalid FAT32 sector size (code -301)." },
+  },
+  {
+    id: "storage-full",
+    group: "Installation",
+    label: "Not enough space",
+    screen: "installation",
+    installFailure: {
+      stage: "storage",
+      detail: "Not enough free space on the iPod. Free some space, then try again.",
+    },
+  },
+  {
+    id: "transfer-failed",
+    group: "Installation",
+    label: "USB transfer failed",
+    screen: "installation",
+    installFailure: {
+      stage: "uploadOsos",
+      detail:
+        "USB transfer failed: device disconnected. Reconnect your iPod in DFU mode before trying again.",
+    },
+  },
+  {
+    id: "verification-failed",
+    group: "Installation",
+    label: "Readback verification failed",
+    screen: "installation",
+    installFailure: {
+      stage: "verify",
+      detail:
+        "RevolaOS readback verification failed. The bootloader was not installed. Return to DFU mode and try again.",
+    },
+  },
+  { id: "success", group: "Installation", label: "Success screen", screen: "success" },
+  {
+    id: "update-available",
+    group: "App updates",
+    label: "Update available",
+    screen: "main",
+    update: "available",
+  },
+  {
+    id: "update-manual",
+    group: "App updates",
+    label: "Manual update available",
+    screen: "main",
+    update: "manual",
+  },
+  {
+    id: "update-current",
+    group: "App updates",
+    label: "Up to date",
+    screen: "main",
+    update: "current",
+    hint: "Check for updates to show the confirmation.",
+  },
+  {
+    id: "update-check-error",
+    group: "App updates",
+    label: "Update check failed",
+    screen: "main",
+    update: "check-error",
+  },
+  {
+    id: "update-download",
+    group: "App updates",
+    label: "Downloading and installing",
+    screen: "main",
+    update: "installing",
+    startUpdate: true,
+    hint: "Stops at installing; no application restart occurs.",
+  },
+  {
+    id: "update-download-error",
+    group: "App updates",
+    label: "Update download failed",
+    screen: "main",
+    update: "download-error",
+    startUpdate: true,
+  },
+];
+
+export function findScenario(id: string | null): Scenario {
+  return scenarios.find((scenario) => scenario.id === id) ?? scenarios[1];
+}
