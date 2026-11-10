@@ -4,6 +4,7 @@ use revola_device::{
     check_saved, discover, CheckReport, Cleanup, DeviceSelector, Event, Session, SysCfg,
 };
 mod bundle;
+mod debug;
 mod decrypt;
 mod firmware;
 mod progress;
@@ -54,6 +55,20 @@ Usage:
     [--skip-bytes BYTES] [--offset BYTES] [--size BYTES] [--chunk BYTES] [--iv HEX]
     [--reference FILE] [--device BUS:ADDRESS] [--json]
 
+  revola debug COMMAND [--device BUS:ADDRESS] [--json]
+    info
+    peek ADDRESS|SYMBOL LENGTH [--out NEW_FILE] [--symbols LD_FILE]
+    poke ADDRESS|SYMBOL VALUE [--symbols LD_FILE]
+    screenshot NEW_PNG
+    press menu|select|play|previous|next
+    scroll STEPS
+    heap [--watch SECONDS]
+    perf [--seconds N] [--rate HZ] [--symbols LD_FILE]
+    screen
+    select | menu
+    wait [--until change|stable] [--timeout SECONDS]
+    goto PATH
+
 upload streams through a 64 KiB buffer, verifies disk readback, then returns to DFU.
 Use a signed --bundle with its trusted --key, or a development --helper directory. Existing destination
 files require --overwrite; replacement happens after temporary-file verification.
@@ -79,6 +94,19 @@ NOR SysCfg reads. Connect in BootROM DFU (blank screen);
 recoverable DFU states are cleared before checks. Reset only if recovery fails.
 Device tooling: iPod Classic 6G, 6.5G and 7G, with a verified BootROM.
 Installation requires a bundle matching the checked device.
+
+debug talks to an iPod running RevolaOS with the USB Debug extension enabled
+(normal mode, 05ac:1261). It uses vendor control requests only and claims no interface.
+peek prints a hexdump; poke writes one aligned 32-bit word and reads it back.
+scroll STEPS is positive for clockwise (down a list).
+heap --watch prints a line every SECONDS until interrupted (JSON lines with --json).
+screen describes the strings drawn in the next redraw: title, rows, values, selection.
+select and menu press until the screen changes, up to three times.
+wait exits 2 if --until change saw no change within --timeout (default 5 s).
+goto returns to the main menu, then selects each row label of PATH, e.g. Settings/About.
+perf samples the PC at --rate (default 100 Hz) for --seconds (default 5) and
+attributes each sample to the nearest preceding symbol in --symbols.
+--symbols takes the generated NAME = 0xADDRESS; linker script, e.g. osos-2.0.5.ld.
 
 --device uses decimal BUS:ADDRESS from `revola devices`, not USB VID:PID.
 Omit it when only one DFU device is connected.
@@ -112,6 +140,7 @@ enum Command {
     },
     Decrypt(decrypt::Args),
     Upload(upload::Args),
+    Debug(debug::Args),
     NorDump {
         output: String,
         selector: Option<DeviceSelector>,
@@ -158,6 +187,7 @@ fn parse(args: &[String]) -> Result<(Command, bool), String> {
                 | "upload"
                 | "bundle"
                 | "firmware"
+                | "debug"
         )
         && matches!(args[1].as_str(), "--help" | "-h")
     {
@@ -196,6 +226,7 @@ fn parse(args: &[String]) -> Result<(Command, bool), String> {
         Some("firmware") => Command::Firmware(firmware::parse(&args[1..])?),
         Some("bundle") => Command::Bundle(bundle::parse(&args[1..])?),
         Some("upload") => Command::Upload(upload::parse(&args[1..])?),
+        Some("debug") => Command::Debug(debug::parse(&args[1..])?),
         Some("decrypt") => Command::Decrypt(decrypt::parse(&args[1..])?),
         Some("check-files") => {
             let mut options = parse_options(&args[1..], &["--bootrom", "--syscfg"])?;
@@ -395,6 +426,7 @@ fn run(command: Command, json: bool) -> CliResult<u8> {
         Command::Firmware(args) => return firmware::run(args, json),
         Command::Bundle(args) => return bundle::run(args, json),
         Command::Upload(args) => return upload::run(args, json),
+        Command::Debug(args) => return debug::run(args, json),
         Command::Decrypt(args) => return decrypt::run(args, json),
         Command::NorDump { output, selector } => {
             ensure_new_output(&output)?;

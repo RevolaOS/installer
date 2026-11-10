@@ -55,7 +55,7 @@ pub(crate) fn context() -> Result<Context> {
     Context::new().map_err(|e| usb_error("context", e))
 }
 
-fn candidates(context: &Context) -> Result<Vec<(Device<Context>, DeviceInfo)>> {
+pub(crate) fn candidates(context: &Context) -> Result<Vec<(Device<Context>, DeviceInfo)>> {
     let devices = context.devices().map_err(|e| usb_error("enumeration", e))?;
     let mut found = Vec::new();
     for device in devices.iter() {
