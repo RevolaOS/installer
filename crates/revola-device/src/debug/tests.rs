@@ -15,6 +15,8 @@ struct Device {
     /// Readable regions: base address and contents.
     memory: Vec<(u32, Vec<u8>)>,
     screens: VecDeque<Vec<u8>>,
+    /// Replies to other IN requests, by request.
+    replies: Vec<(u8, Vec<u8>)>,
     requests: Vec<Request>,
 }
 
@@ -26,6 +28,10 @@ impl Fake {
         let fake = Self::default();
         fake.0.borrow_mut().info = info;
         fake
+    }
+
+    fn reply(&self, request: u8, bytes: Vec<u8>) {
+        self.0.borrow_mut().replies.push((request, bytes));
     }
 
     fn map(&self, base: u32, bytes: Vec<u8>) {
@@ -73,7 +79,12 @@ impl Transport for Fake {
                 }
             }
             SCREEN_DATA => device.screens.pop_front().expect("Unexpected SCREEN_DATA"),
-            other => panic!("Unexpected IN request {other:#x}"),
+            other => device
+                .replies
+                .iter()
+                .find(|(request, _)| *request == other)
+                .map(|(_, bytes)| bytes.clone())
+                .unwrap_or_else(|| panic!("Unexpected IN request {other:#x}")),
         };
         let n = reply.len().min(data.len());
         data[..n].copy_from_slice(&reply[..n]);
@@ -132,6 +143,7 @@ fn info_reply_is_parsed_and_checked() {
                 peak: 0x30,
                 failure: 0x34,
             },
+            clock_hz: 1_000_000,
         }
     );
 
@@ -145,7 +157,7 @@ fn info_reply_is_parsed_and_checked() {
             encode::info(512)[..INFO_SIZE - 1].to_vec(),
             "is the extension enabled",
         ),
-        (bad_version, "protocol 2"),
+        (bad_version, "protocol 3"),
         (encode::info(32), "Implausible transfer limit"),
         (encode::info(0x10001), "Implausible transfer limit"),
     ] {
@@ -332,4 +344,80 @@ fn heap_walks_the_extension_records() {
     put32(&mut fake.0.borrow_mut().info, 32, 0);
     assert!(debugger.heap().unwrap().extensions.is_empty());
     assert_eq!(fake.requests(READ).len(), 3);
+}
+
+fn words(values: &[u32]) -> Vec<u8> {
+    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+#[test]
+fn samples_carry_their_time() {
+    let mut b = words(&[2, 5]);
+    b.extend(words(&[
+        0x0800_1000,
+        0x0800_2000,
+        100,
+        0x0800_1004,
+        0x0800_2004,
+        110,
+    ]));
+    let (samples, dropped) = parse_samples(&b).unwrap();
+    assert_eq!(dropped, 5);
+    assert_eq!(
+        samples[1],
+        Sample {
+            pc: 0x0800_1004,
+            lr: 0x0800_2004,
+            time: 110
+        }
+    );
+    assert!(parse_samples(&b[..b.len() - 1]).is_err());
+}
+
+#[test]
+fn instruments_parse_and_send_their_arguments() {
+    let fake = Fake::new(encode::info(512));
+    fake.reply(CLOCK, words(&[123_456]));
+    fake.reply(BOOT, words(&[2_000_000, 0, 2_400_000, 7, 8]));
+    fake.reply(HEAP_STATS, words(&[10, 300, 200, 400, 20 << 20]));
+    fake.reply(
+        STACK,
+        words(&[0x0900_0000, 0x2_0000, 0x0901_f000, 0x0901_e000]),
+    );
+    let mut debugger = fake.debugger();
+
+    assert_eq!(debugger.clock().unwrap(), 123_456);
+    let boot = debugger.boot_times().unwrap();
+    assert_eq!(
+        (
+            boot.entry,
+            boot.first_idle,
+            boot.flush_at_boot,
+            boot.flush_written
+        ),
+        (2_000_000, 2_400_000, 7, 8)
+    );
+    let heap = debugger.heap_stats().unwrap();
+    assert_eq!((heap.samples, heap.min, heap.max), (10, 200, 400));
+    let stack = debugger.stack(true).unwrap();
+    assert_eq!(stack.used(), 0x2000);
+    assert_eq!(fake.requests(STACK)[0].2, 1);
+
+    debugger.heap_watch(50).unwrap();
+    debugger.fault(Fault::SoftwareAbort).unwrap();
+    debugger.flush(Some(25)).unwrap();
+    debugger.flush(None).unwrap();
+    debugger.reset().unwrap();
+    assert_eq!(fake.requests(HEAP_WATCH)[0].2, 50);
+    assert_eq!(fake.requests(FAULT)[0].2, 2);
+    let flushes = fake.requests(FLUSH);
+    assert_eq!((flushes[0].2, flushes[0].3), (FLUSH_THEN_RESET, 25));
+    assert_eq!((flushes[1].2, flushes[1].3), (0, 0));
+    assert_eq!(fake.requests(RESET).len(), 1);
+}
+
+#[test]
+fn inconsistent_stack_replies_are_refused() {
+    assert!(parse_stack(&words(&[0x0900_0000, 0x2_0000, 0x0901_f000, 0x0902_0000])).is_err());
+    assert!(parse_stack(&words(&[0x0900_0000, 0x2_0000])).is_err());
 }

@@ -16,16 +16,30 @@ pub(crate) const PROFILE: u8 = 0xd5;
 pub(crate) const SAMPLES: u8 = 0xd6;
 pub(crate) const SCREEN: u8 = 0xd7;
 pub(crate) const SCREEN_DATA: u8 = 0xd8;
+pub(crate) const CLOCK: u8 = 0xd9;
+pub(crate) const BOOT: u8 = 0xda;
+pub(crate) const HEAP_WATCH: u8 = 0xdb;
+pub(crate) const HEAP_STATS: u8 = 0xdc;
+pub(crate) const STACK: u8 = 0xdd;
+pub(crate) const FAULT: u8 = 0xde;
+pub(crate) const RESET: u8 = 0xdf;
+pub(crate) const FLUSH: u8 = 0xe0;
 
 pub(crate) const INFO_SIZE: usize = 64;
 const INFO_MAGIC: u32 = u32::from_le_bytes(*b"RVUD");
 const SCREEN_MAGIC: u32 = u32::from_le_bytes(*b"RVSC");
-pub(crate) const PROTOCOL_VERSION: u16 = 1;
+pub(crate) const PROTOCOL_VERSION: u16 = 2;
+/// SAMPLES: {count, dropped}, then {pc, lr, µs} per sample.
+pub const SAMPLES_HEADER: usize = 8;
+pub const SAMPLE_BYTES: usize = 12;
 
 /// INPUT kinds, in the low byte of wValue; the argument goes in wIndex.
 pub(crate) const INPUT_BUTTONS: u16 = 1;
 pub(crate) const INPUT_TOUCH: u16 = 2;
 pub(crate) const INPUT_LIFT: u16 = 3;
+
+/// FLUSH mode bit: reset after the flush.
+pub(crate) const FLUSH_THEN_RESET: u16 = 1;
 
 /// The request's name for error messages.
 pub(crate) fn request_name(request: u8) -> &'static str {
@@ -39,6 +53,14 @@ pub(crate) fn request_name(request: u8) -> &'static str {
         SAMPLES => "USB Debug SAMPLES",
         SCREEN => "USB Debug SCREEN",
         SCREEN_DATA => "USB Debug SCREEN_DATA",
+        CLOCK => "USB Debug CLOCK",
+        BOOT => "USB Debug BOOT",
+        HEAP_WATCH => "USB Debug HEAP_WATCH",
+        HEAP_STATS => "USB Debug HEAP_STATS",
+        STACK => "USB Debug STACK",
+        FAULT => "USB Debug FAULT",
+        RESET => "USB Debug RESET",
+        FLUSH => "USB Debug FLUSH",
         _ => "USB Debug request",
     }
 }
@@ -79,6 +101,8 @@ pub struct Info {
     /// Address of the pointer to the first extension record.
     pub extensions: u32,
     pub record: RecordLayout,
+    /// Ticks per second of the clock CLOCK, BOOT and SAMPLES report.
+    pub clock_hz: u32,
 }
 
 impl Info {
@@ -117,33 +141,130 @@ impl Info {
                 peak: u16_at(b, 44),
                 failure: u16_at(b, 46),
             },
+            clock_hz: u32_at(b, 48),
         })
     }
 }
 
-/// One PC sample: the interrupted program counter and link register.
+/// One PC sample: the interrupted program counter and link register, and
+/// when it was taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sample {
     pub pc: u32,
     pub lr: u32,
+    /// Clock ticks (µs); wraps.
+    pub time: u32,
 }
 
-/// SAMPLES: {count, dropped} then count (pc, lr) pairs.
+/// SAMPLES: {count, dropped} then count {pc, lr, time}.
 pub(crate) fn parse_samples(b: &[u8]) -> Result<(Vec<Sample>, u32)> {
-    if b.len() < 8 {
+    if b.len() < SAMPLES_HEADER {
         return Err(invalid("Short SAMPLES reply"));
     }
     let count = u32_at(b, 0) as usize;
-    if 8 + count * 8 > b.len() {
+    if SAMPLES_HEADER + count * SAMPLE_BYTES > b.len() {
         return Err(invalid("SAMPLES count exceeds the reply"));
     }
     let samples = (0..count)
-        .map(|i| Sample {
-            pc: u32_at(b, 8 + i * 8),
-            lr: u32_at(b, 12 + i * 8),
+        .map(|i| {
+            let at = SAMPLES_HEADER + i * SAMPLE_BYTES;
+            Sample {
+                pc: u32_at(b, at),
+                lr: u32_at(b, at + 4),
+                time: u32_at(b, at + 8),
+            }
         })
         .collect();
     Ok((samples, u32_at(b, 4)))
+}
+
+fn words<const N: usize>(b: &[u8], what: &str) -> Result<[u32; N]> {
+    if b.len() < N * 4 {
+        return Err(invalid(format!("Short {what} reply")));
+    }
+    Ok(std::array::from_fn(|i| u32_at(b, i * 4)))
+}
+
+pub(crate) fn parse_clock(b: &[u8]) -> Result<u32> {
+    Ok(words::<1>(b, "CLOCK")?[0])
+}
+
+/// BOOT: clock ticks at points of the boot, 0 for a point not reached or not
+/// recorded, and the FLUSH sequence numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct BootTimes {
+    /// The extension's entry.
+    pub entry: u32,
+    pub main_menu: u32,
+    /// The first UI timer tick after the entry.
+    pub first_idle: u32,
+    /// The sequence number the settings held at the entry.
+    pub flush_at_boot: u32,
+    /// The last sequence number FLUSH stored.
+    pub flush_written: u32,
+}
+
+pub(crate) fn parse_boot(b: &[u8]) -> Result<BootTimes> {
+    let [entry, main_menu, first_idle, flush_at_boot, flush_written] = words(b, "BOOT")?;
+    Ok(BootTimes {
+        entry,
+        main_menu,
+        first_idle,
+        flush_at_boot,
+        flush_written,
+    })
+}
+
+/// HEAP_STATS: Apple's free heap bytes since HEAP_WATCH started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct HeapStats {
+    pub samples: u32,
+    pub latest: u32,
+    pub min: u32,
+    pub max: u32,
+    pub total: u32,
+}
+
+pub(crate) fn parse_heap_stats(b: &[u8]) -> Result<HeapStats> {
+    let [samples, latest, min, max, total] = words(b, "HEAP_STATS")?;
+    Ok(HeapStats {
+        samples,
+        latest,
+        min,
+        max,
+        total,
+    })
+}
+
+/// STACK: the UI stack and how deep it went since it was filled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct StackMark {
+    pub base: u32,
+    pub size: u32,
+    /// The pattern runs from `base` up to here.
+    pub filled_top: u32,
+    /// The lowest word that changed; `filled_top` when none did.
+    pub lowest_changed: u32,
+}
+
+impl StackMark {
+    /// Bytes from the top of the stack down to the deepest change.
+    pub fn used(&self) -> u32 {
+        (self.base + self.size).saturating_sub(self.lowest_changed)
+    }
+}
+
+pub(crate) fn parse_stack(b: &[u8]) -> Result<StackMark> {
+    let [base, size, filled_top, lowest_changed] = words(b, "STACK")?;
+    if filled_top < base || lowest_changed < base || lowest_changed > filled_top {
+        return Err(invalid("Inconsistent STACK reply"));
+    }
+    Ok(StackMark {
+        base,
+        size,
+        filled_top,
+        lowest_changed,
+    })
 }
 
 /// A string the UI drew during a SCREEN capture.
@@ -211,6 +332,7 @@ pub(crate) mod encode {
         b[4..6].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
         b[16..20].copy_from_slice(&max_transfer.to_le_bytes());
         b[20..24].copy_from_slice(&0x3890_0000u32.to_le_bytes());
+        b[48..52].copy_from_slice(&1_000_000u32.to_le_bytes());
         b
     }
 

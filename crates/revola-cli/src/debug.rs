@@ -4,7 +4,8 @@ use super::{
     ensure_new_output, parse_selector, print_json, read_bounded, write_new_output, CliResult,
 };
 use revola_device::{
-    png, Button, Debugger, DeviceSelector, HeapReport, Sample, Screen, SCREEN_HEIGHT, SCREEN_WIDTH,
+    png, BootTimes, Button, Debugger, DeviceSelector, Fault, HeapReport, Sample, Screen,
+    SAMPLES_HEADER, SAMPLE_BYTES, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 use serde::Serialize;
 use std::{
@@ -15,11 +16,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// SAMPLES reply header: {count, dropped}; each sample is {pc, lr}.
-const SAMPLES_HEADER: usize = 8;
-const SAMPLE_BYTES: usize = 8;
 const TOP_FUNCTIONS: usize = 20;
 const TOP_CALLERS: usize = 3;
+/// How long a reset iPod gets to boot and answer again.
+const RECONNECT_TIMEOUT: Duration = Duration::from_secs(90);
+/// FLUSH counts its reset delay in units of 100 µs.
+const FLUSH_DELAY_UNIT_US: u32 = 100;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Location {
@@ -65,6 +67,21 @@ enum Action {
         timeout: Duration,
     },
     Goto(String),
+    Clock,
+    Boot,
+    HeapWatch {
+        period_ms: u16,
+        seconds: u32,
+    },
+    Stack {
+        refill: bool,
+    },
+    Fault(Fault),
+    Reset,
+    Flush {
+        /// In units of 100 µs.
+        reset_after: Option<u16>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -115,6 +132,8 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         "heap" => &["--watch"],
         "perf" => &["--seconds", "--rate", "--symbols"],
         "wait" => &["--until", "--timeout"],
+        "heap-watch" => &["--period", "--seconds"],
+        "flush" => &["--reset-after"],
         _ => &[],
     };
     if let Some(option) = options
@@ -177,6 +196,26 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             timeout: Duration::from_secs(positive("--timeout", 5)?.into()),
         },
         ("goto", [path]) => Action::Goto(path.to_string()),
+        ("clock", []) => Action::Clock,
+        ("boot", []) => Action::Boot,
+        ("heap-watch", []) => Action::HeapWatch {
+            period_ms: u16::try_from(positive("--period", 50)?)
+                .map_err(|_| "--period is at most 65535")?,
+            seconds: positive("--seconds", 10)?,
+        },
+        ("stack", []) => Action::Stack { refill: false },
+        ("stack", ["refill"]) => Action::Stack { refill: true },
+        ("fault", [kind]) => Action::Fault(kind.parse()?),
+        ("reset", []) => Action::Reset,
+        ("flush", []) => Action::Flush {
+            reset_after: match options.get("--reset-after") {
+                None => None,
+                Some(value) => Some(
+                    u16::try_from(number(value)?.div_ceil(FLUSH_DELAY_UNIT_US))
+                        .map_err(|_| "--reset-after is at most 6553500 µs")?,
+                ),
+            },
+        },
         _ => return Err("Invalid debug command; use revola debug --help".into()),
     };
     let symbols = options.get("--symbols").map(|s| s.to_string());
@@ -388,6 +427,32 @@ fn write_heap_line(elapsed: Duration, heap: &HeapReport, out: &mut impl Write) -
         write!(out, "  {} {} (peak {})", e.file, e.live, e.peak)?;
     }
     writeln!(out)
+}
+
+fn seconds(ticks: u32, hz: u32) -> f64 {
+    f64::from(ticks) / f64::from(hz.max(1))
+}
+
+fn print_boot(boot: &BootTimes, hz: u32, json: bool, out: &mut impl Write) -> CliResult<()> {
+    if json {
+        return print_json(&serde_json::json!({"boot": boot, "hz": hz}));
+    }
+    let point = |ticks: u32| {
+        if ticks == 0 {
+            "not recorded".to_string()
+        } else {
+            format!("{:.3} s", seconds(ticks, hz))
+        }
+    };
+    writeln!(out, "Clock at usb-debug's entry: {}", point(boot.entry))?;
+    writeln!(out, "First main menu: {}", point(boot.main_menu))?;
+    writeln!(out, "First UI timer tick: {}", point(boot.first_idle))?;
+    writeln!(
+        out,
+        "FLUSH sequence: {} at boot, {} last written",
+        boot.flush_at_boot, boot.flush_written
+    )?;
+    Ok(())
 }
 
 fn print_screen(screen: &Screen, json: bool) -> CliResult<()> {
@@ -608,6 +673,118 @@ pub(super) fn run(args: Args, json: bool) -> CliResult<u8> {
                 return Ok(2);
             }
         }
+        Action::Clock => {
+            let now = debugger.clock()?;
+            let hz = debugger.info().clock_hz;
+            if json {
+                print_json(&serde_json::json!({"ticks": now, "hz": hz}))?;
+            } else {
+                writeln!(out, "{now} ticks ({} s at {hz} Hz)", seconds(now, hz))?;
+            }
+        }
+        Action::Boot => {
+            let boot = debugger.boot_times()?;
+            let hz = debugger.info().clock_hz;
+            print_boot(&boot, hz, json, &mut out)?;
+        }
+        Action::HeapWatch { period_ms, seconds } => {
+            debugger.heap_watch(period_ms)?;
+            sleep(Duration::from_secs(seconds.into()));
+            let stats = debugger.heap_stats();
+            let stopped = debugger.heap_watch(0);
+            let stats = stats?;
+            stopped?;
+            if json {
+                print_json(&stats)?;
+            } else {
+                writeln!(
+                    out,
+                    "{} samples every {period_ms} ms: free {} now, {} lowest, {} highest, of {}",
+                    stats.samples, stats.latest, stats.min, stats.max, stats.total
+                )?;
+            }
+        }
+        Action::Stack { refill } => {
+            let stack = debugger.stack(refill)?;
+            if json {
+                print_json(
+                    &serde_json::json!({"stack": stack, "used": stack.used(), "refill": refill}),
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "UI stack {:#010x}+{:#x}: {} of {} bytes used at the deepest (filled below {:#010x}){}",
+                    stack.base,
+                    stack.size,
+                    stack.used(),
+                    stack.size,
+                    stack.filled_top,
+                    if refill { "; refilled" } else { "" }
+                )?;
+            }
+        }
+        Action::Fault(fault) => {
+            debugger.fault(fault)?;
+            let name = format!("{fault:?}");
+            if json {
+                print_json(&serde_json::json!({"fault": name}))?;
+            } else {
+                writeln!(out, "Raised {name} on the UI task")?;
+            }
+        }
+        Action::Reset => {
+            debugger.reset()?;
+            drop(debugger);
+            let mut debugger = Debugger::reconnect(None, RECONNECT_TIMEOUT)?;
+            let boot = debugger.boot_times()?;
+            let hz = debugger.info().clock_hz;
+            print_boot(&boot, hz, json, &mut out)?;
+        }
+        Action::Flush { reset_after: None } => {
+            debugger.flush(None)?;
+            // The flush runs at the next UI timer tick.
+            sleep(Duration::from_millis(200));
+            let boot = debugger.boot_times()?;
+            if json {
+                print_json(&serde_json::json!({"sequence": boot.flush_written}))?;
+            } else {
+                writeln!(out, "Flushed with sequence number {}", boot.flush_written)?;
+            }
+        }
+        Action::Flush {
+            reset_after: Some(delay),
+        } => {
+            let before = debugger.boot_times()?.flush_written;
+            debugger.flush(Some(delay))?;
+            drop(debugger);
+            let mut debugger = Debugger::reconnect(None, RECONNECT_TIMEOUT)?;
+            let found = debugger.boot_times()?.flush_at_boot;
+            let survived = if found == before + 1 {
+                "newest"
+            } else if found == before {
+                "previous"
+            } else {
+                "neither"
+            };
+            if json {
+                print_json(&serde_json::json!({
+                    "reset_after_us": u32::from(delay) * FLUSH_DELAY_UNIT_US,
+                    "written": before + 1,
+                    "found": found,
+                    "survived": survived,
+                }))?;
+            } else {
+                writeln!(
+                    out,
+                    "Reset {} µs after the flush began; wrote sequence {}, found {found} at boot: {survived} copy",
+                    u32::from(delay) * FLUSH_DELAY_UNIT_US,
+                    before + 1
+                )?;
+            }
+            if survived == "neither" {
+                return Ok(2);
+            }
+        }
         Action::Goto(path) => {
             let (steps, screen) = debugger.goto(&path)?;
             if json {
@@ -679,9 +856,34 @@ mod tests {
                 value: 1
             }
         );
+        assert_eq!(
+            parse_line("flush --reset-after 250").unwrap().action,
+            Action::Flush {
+                reset_after: Some(3)
+            }
+        );
+        assert_eq!(
+            parse_line("heap-watch --period 20").unwrap().action,
+            Action::HeapWatch {
+                period_ms: 20,
+                seconds: 10
+            }
+        );
+        assert_eq!(
+            parse_line("stack refill").unwrap().action,
+            Action::Stack { refill: true }
+        );
+        assert_eq!(
+            parse_line("fault abort").unwrap().action,
+            Action::Fault(Fault::SoftwareAbort)
+        );
         for line in [
             "",
             "info extra",
+            "flush --reset-after 6553600",
+            "stack deep",
+            "fault prefetch",
+            "heap-watch --period 0",
             "peek 0x1000",
             "peek 0x1000 0",
             "peek App_object 4",
@@ -716,7 +918,7 @@ mod tests {
         assert_eq!(function_name(0x0800_0ffc, &symbols), "0x08000ffc");
         assert!(parse_symbols("A = nowhere;").is_err());
 
-        let sample = |pc, lr| Sample { pc, lr };
+        let sample = |pc, lr| Sample { pc, lr, time: 0 };
         let functions = profile(
             &[
                 sample(0x0800_2004, 0x0800_1010),

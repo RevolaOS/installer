@@ -12,7 +12,10 @@ mod screen;
 mod tests;
 
 pub use display::{png, HEIGHT, WIDTH};
-pub use protocol::{DrawnText, Info, RecordLayout, Sample};
+pub use protocol::{
+    BootTimes, DrawnText, HeapStats, Info, RecordLayout, Sample, StackMark, SAMPLES_HEADER,
+    SAMPLE_BYTES,
+};
 pub use screen::{Row, Screen};
 
 use crate::{
@@ -67,6 +70,24 @@ impl std::str::FromStr for Button {
                 ))
             }
         })
+    }
+}
+
+/// What FAULT raises on the UI task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    UndefinedInstruction = 1,
+    SoftwareAbort = 2,
+}
+
+impl std::str::FromStr for Fault {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "undefined" => Ok(Self::UndefinedInstruction),
+            "abort" => Ok(Self::SoftwareAbort),
+            _ => Err(format!("Unknown fault {s}; use undefined or abort")),
+        }
     }
 }
 
@@ -306,6 +327,68 @@ impl Debugger {
         parse_samples(&b[..n])
     }
 
+    /// The device's clock, in `info().clock_hz` ticks; wraps.
+    pub fn clock(&mut self) -> Result<u32> {
+        parse_clock(&self.read_reply(CLOCK, 0, 4)?)
+    }
+
+    pub fn boot_times(&mut self) -> Result<BootTimes> {
+        parse_boot(&self.read_reply(BOOT, 0, 20)?)
+    }
+
+    /// Sample Apple's free heap every `period_ms` from now on; 0 stops.
+    pub fn heap_watch(&mut self, period_ms: u16) -> Result<()> {
+        self.out(HEAP_WATCH, period_ms, 0)
+    }
+
+    pub fn heap_stats(&mut self) -> Result<HeapStats> {
+        parse_heap_stats(&self.read_reply(HEAP_STATS, 0, 20)?)
+    }
+
+    /// The UI stack's watermark; with `refill`, the device refills the stack
+    /// at its next UI timer tick, after this reply.
+    pub fn stack(&mut self, refill: bool) -> Result<StackMark> {
+        parse_stack(&self.read_reply(STACK, refill as u16, 16)?)
+    }
+
+    pub fn fault(&mut self, fault: Fault) -> Result<()> {
+        self.out(FAULT, fault as u16, 0)
+    }
+
+    /// Warm reset about 50 ms after the reply.
+    pub fn reset(&mut self) -> Result<()> {
+        self.out(RESET, 0, 0)
+    }
+
+    /// Store the next FLUSH sequence number and flush the settings; with
+    /// `reset_after` (100 µs units), reset that long after the flush began, or
+    /// as soon as it returns for 0.
+    pub fn flush(&mut self, reset_after: Option<u16>) -> Result<()> {
+        match reset_after {
+            None => self.out(FLUSH, 0, 0),
+            Some(delay) => self.out(FLUSH, FLUSH_THEN_RESET, delay),
+        }
+    }
+
+    /// Open the iPod again once it is back after a reset.
+    pub fn reconnect(selector: Option<DeviceSelector>, timeout: Duration) -> Result<Self> {
+        // Let the old connection drop first.
+        sleep(Duration::from_secs(1));
+        let deadline = Instant::now() + timeout;
+        loop {
+            match Self::open(selector) {
+                Ok(debugger) => return Ok(debugger),
+                Err(e) if Instant::now() > deadline => {
+                    return Err(invalid(format!(
+                        "The iPod did not answer within {} s of the reset: {e}",
+                        timeout.as_secs()
+                    )))
+                }
+                Err(_) => sleep(Duration::from_millis(500)),
+            }
+        }
+    }
+
     /// Capture the strings of the next full redraw and describe the screen.
     pub fn drawn(&mut self) -> Result<Vec<DrawnText>> {
         self.out(SCREEN, 0, 0)?;
@@ -431,6 +514,13 @@ impl Debugger {
             }
         }
         Err(invalid(format!("No row '{label}' on '{}'", screen.title)))
+    }
+
+    fn read_reply(&mut self, request: u8, value: u16, length: usize) -> Result<Vec<u8>> {
+        let mut b = vec![0; length];
+        let n = self.transport.read(VENDOR_IN, request, value, 0, &mut b)?;
+        b.truncate(n);
+        Ok(b)
     }
 
     fn out(&mut self, request: u8, value: u16, index: u16) -> Result<()> {

@@ -25,8 +25,9 @@ pub use upload::{
 
 pub use bootloader::{BootloaderFingerprint, BootloaderReport};
 pub use debug::{
-    png, Button, Debugger, DrawnText, ExtensionHeap, HeapReport, Info as DebugInfo, RecordLayout,
-    Row, Sample, Screen, HEIGHT as SCREEN_HEIGHT, WIDTH as SCREEN_WIDTH,
+    png, BootTimes, Button, Debugger, DrawnText, ExtensionHeap, Fault, HeapReport, HeapStats,
+    Info as DebugInfo, RecordLayout, Row, Sample, Screen, StackMark, HEIGHT as SCREEN_HEIGHT,
+    SAMPLES_HEADER, SAMPLE_BYTES, WIDTH as SCREEN_WIDTH,
 };
 pub use decrypt::{DecryptOptions, DecryptProgress, DecryptReport, Decrypted};
 pub use img1::classic_img1_body_range;

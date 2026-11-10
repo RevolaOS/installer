@@ -68,6 +68,12 @@ Usage:
     select | menu
     wait [--until change|stable] [--timeout SECONDS]
     goto PATH
+    clock | boot
+    heap-watch [--period MS] [--seconds N]
+    stack [refill]
+    fault undefined|abort
+    reset
+    flush [--reset-after MICROSECONDS]
 
 upload streams through a 64 KiB buffer, verifies disk readback, then returns to DFU.
 Use a signed --bundle with its trusted --key, or a development --helper directory. Existing destination
@@ -107,6 +113,15 @@ goto returns to the main menu, then selects each row label of PATH, e.g. Setting
 perf samples the PC at --rate (default 100 Hz) for --seconds (default 5) and
 attributes each sample to the nearest preceding symbol in --symbols.
 --symbols takes the generated NAME = 0xADDRESS; linker script, e.g. osos-2.0.5.ld.
+clock prints the device's microsecond counter; boot prints it at points of the boot.
+heap-watch samples Apple's free heap every --period (default 50 ms) for --seconds
+(default 10) and prints the lowest, highest and latest figures.
+stack prints how deep the UI stack went; refill restarts the mark afterwards.
+fault raises a fault on the UI task to test the panic screen and crash recovery.
+reset warm-resets the iPod, waits for it to answer again and prints boot.
+flush stores a new sequence number and flushes the settings. --reset-after resets
+that long after the flush began (0: when it returns), waits for the iPod, and
+reports which copy survived; it exits 2 when neither did.
 
 --device uses decimal BUS:ADDRESS from `revola devices`, not USB VID:PID.
 Omit it when only one DFU device is connected.
