@@ -134,7 +134,16 @@ fn future_packages_explain_installer_requirements() {
     );
 }
 
-const REFERENCE_MANIFEST: &str = "52564d460100000000000100010000000200000052000000000003000600100016001b0028002d000000000036003d0001014800657100455100457175616c697a657200302e312e30005061756c0047504c2d332e302d6f6e6c79006d61696e006d61696e2e72767800656469746f7200656469746f722e7276780065712e656469746f7200";
+/// An extension file from revola's rvx-pack (tools/rvx.py `pack_extension`): id eq, API
+/// 1.7, modules main (always) and editor (screen), a resident lz bitmap "icon" and a data
+/// asset "table" read on request.
+const REFERENCE_PACKAGE: &str = "525658300100000007000100ffb60e666b000000040000000100000052564d460200000007000100010000000200000000000000370000000000030006000c001200170024000000000029000101300065710045510042616e647300302e312e30005061756c0047504c2d332e302d6f6e6c79006d61696e00656469746f7200656469746f72000008e290ea00000000d8000000240000002400000078820d5c00000000040100002000000020000000f01540e602010000fc0000000500000028000000df9b9c4a010000002401000006000000060000000800000004000000040000000100000001000000000102030405060708090a0b080000000211f0001500000008000000040000000000000000000000010000000000000000000000000000000001020304050000";
+/// Offsets in REFERENCE_PACKAGE: the header's entry and resident counts, the catalog, and
+/// the first module payload.
+const ENTRY_COUNT: usize = 20;
+const RESIDENT_COUNT: usize = 24;
+const CATALOG: usize = 28 + 108;
+const MAIN_PAYLOAD: usize = 0xd8;
 
 fn unhex(hex: &str) -> Vec<u8> {
     (0..hex.len() / 2)
@@ -152,102 +161,42 @@ fn core() -> Core {
     }
 }
 
-/// A manifest.bin as revola's tools/manifest.py writes it: id, modules with `main` first.
-fn manifest_bin(id: &str, modules: &[&str], api: u32) -> Vec<u8> {
-    let mut strings = Vec::new();
-    let mut add = |text: &str| {
-        let offset = strings.len() as u16;
-        strings.extend_from_slice(text.as_bytes());
-        strings.push(0);
-        offset
-    };
-    let texts: Vec<u16> = [id, "Name", "Description", "0.1.0", "Author", "GPL-3.0-only"]
-        .iter()
-        .map(|t| add(t))
-        .collect();
-    let mut records = Vec::new();
-    for (index, name) in modules.iter().enumerate() {
-        let n = add(name);
-        let f = add(&format!("{name}.rvx"));
-        records.extend_from_slice(&n.to_le_bytes());
-        records.extend_from_slice(&f.to_le_bytes());
-        records.push(if index == 0 { 0 } else { 2 });
-        records.push(0);
-        records.extend_from_slice(&0u16.to_le_bytes());
-    }
-    let mut out = Vec::new();
-    for word in [
-        0x464D_5652u32,
-        1,
-        api << 16,
-        1,
-        modules.len() as u32,
-        strings.len() as u32,
-    ] {
-        out.extend_from_slice(&word.to_le_bytes());
-    }
-    for text in texts {
-        out.extend_from_slice(&text.to_le_bytes());
-    }
-    out.extend_from_slice(&records);
-    out.extend_from_slice(&strings);
-    out
+fn reference() -> Vec<u8> {
+    unhex(REFERENCE_PACKAGE)
 }
 
-/// A module image with a valid header and the given sizes.
-fn rvx(id: &str, name: &str, core: &Core, text: usize, relocations: usize) -> Vec<u8> {
-    let mut out = Vec::new();
-    for word in [
-        0x3058_5652u32,
-        1,
-        core.api << 16,
-        core.firmware_build_id,
-        extension::fnv1a(&format!("{id}/{name}")),
-        text as u32,
-        0,
-        0,
-        relocations as u32,
-        1,
-    ] {
-        out.extend_from_slice(&word.to_le_bytes());
-    }
-    out.resize(40 + text + relocations * 4, 0xAB);
-    out
+fn put(file: &mut [u8], at: usize, value: u32) {
+    file[at..at + 4].copy_from_slice(&value.to_le_bytes());
 }
 
 fn with_extension(
     f: &Fixture,
     id: &str,
-    files: &[(&str, &[u8])],
+    file: &[u8],
     api: u32,
 ) -> (Manifest, BTreeMap<String, Vec<u8>>) {
     let mut manifest: Manifest =
         serde_json::from_slice(&fs::read(f.dir.path().join(MANIFEST_FILE)).unwrap()).unwrap();
     manifest.core = Some(core());
-    let mut assets = BTreeMap::new();
-    let mut names = BTreeMap::new();
-    for (name, bytes) in files {
-        let hash = sha256(bytes);
-        manifest
-            .assets
-            .insert(hash.clone(), Asset { bytes: bytes.len() });
-        names.insert((*name).to_owned(), hash.clone());
-        assets.insert(hash, bytes.to_vec());
-    }
+    let hash = sha256(file);
+    manifest
+        .assets
+        .insert(hash.clone(), Asset { bytes: file.len() });
+    let assets = BTreeMap::from([(hash.clone(), file.to_vec())]);
     manifest.extensions.insert(
         id.to_owned(),
         Extension {
             format: EXTENSION_FORMAT.into(),
             version: "0.1.0".into(),
             api,
-            files: names,
+            file: hash,
         },
     );
     let referenced: std::collections::BTreeSet<String> = manifest
         .components
         .values()
         .flat_map(|c| c.files.values())
-        .chain(manifest.extensions.values().flat_map(|e| e.files.values()))
+        .chain(manifest.extensions.values().map(|e| &e.file))
         .cloned()
         .collect();
     manifest.assets.retain(|hash, _| referenced.contains(hash));
@@ -273,15 +222,7 @@ fn write_signed(
 
 #[test]
 fn extension_layouts_match_the_revola_tools() {
-    // Reference bytes produced with revola tools/manifest.py's layout for id eq,
-    // modules main (always) and editor (screen eq.editor).
-    let reference = unhex(REFERENCE_MANIFEST);
-    assert_eq!(
-        extension::module_names("eq", &reference, &core()).unwrap(),
-        ["main", "editor"]
-    );
-    assert_eq!(extension::fnv1a("eq/main"), 0xcaab2ee1);
-    assert_eq!(extension::fnv1a("eq/editor"), 0xbe51d2fd);
+    assert!(extension::check_package("eq", &reference(), &core()).is_ok());
     assert_eq!(
         extension::firmware_build_id("660eb6ff5f49").unwrap(),
         0x660e_b6ff
@@ -292,152 +233,81 @@ fn extension_layouts_match_the_revola_tools() {
 #[test]
 fn extensions_are_validated_and_listed_in_upload_order() {
     let f = Fixture::new();
-    let c = core();
-    let good = [
-        ("manifest.bin", manifest_bin("eq", &["main", "editor"], 1)),
-        ("main.rvx", rvx("eq", "main", &c, 8, 1)),
-        ("editor.rvx", rvx("eq", "editor", &c, 0, 0)),
-    ];
-    let good_refs: Vec<(&str, &[u8])> = good.iter().map(|(n, b)| (*n, b.as_slice())).collect();
-    let (manifest, assets) = with_extension(&f, "eq", &good_refs, 1);
+    let good = reference();
+    let (manifest, assets) = with_extension(&f, "eq", &good, 1);
     write_signed(&f, &manifest, &assets).unwrap();
     let bundle = f.load().unwrap();
     let files: Vec<_> = bundle
         .extension_files()
         .into_iter()
-        .map(|file| file.destination)
+        .map(|file| (file.id.to_owned(), file.destination))
         .collect();
     assert_eq!(
         files,
-        [
-            "/Revola/Extensions/eq/editor.rvx",
-            "/Revola/Extensions/eq/main.rvx",
-            "/Revola/Extensions/eq/manifest.bin",
-        ]
+        [("eq".to_owned(), "/Revola/Extensions/eq.rvx".to_owned())]
     );
-    assert_eq!(
-        bundle.extension_bytes(),
-        good.iter().map(|(_, b)| b.len()).sum::<usize>()
-    );
+    assert_eq!(bundle.extension_bytes(), good.len());
 
-    // Manifest-level rejections: id, file names, api, missing manifest, missing core.
-    let module = rvx("eq", "main", &c, 0, 0);
-    let m = manifest_bin("eq", &["main"], 1);
-    for (id, files, api) in [
-        (
-            "EQ",
-            vec![("manifest.bin", m.as_slice()), ("main.rvx", &module)],
-            1,
-        ),
-        (
-            "eq",
-            vec![("manifest.bin", m.as_slice()), ("Main.rvx", &module)],
-            1,
-        ),
-        (
-            "eq",
-            vec![("manifest.bin", m.as_slice()), ("main.bin", &module)],
-            1,
-        ),
-        (
-            "eq",
-            vec![("manifest.bin", m.as_slice()), ("main.rvx", &module)],
-            2,
-        ),
-        ("eq", vec![("main.rvx", module.as_slice())], 1),
-    ] {
-        let (manifest, _) = with_extension(&f, id, &files, api);
+    // Manifest-level rejections: id, api, missing core, other firmware.
+    for (id, api) in [("EQ", 1), ("eq", 2)] {
+        let (manifest, _) = with_extension(&f, id, &good, api);
         assert!(manifest.validate("0.2.0").is_err(), "{id} {api}");
     }
-    let (mut manifest, _) =
-        with_extension(&f, "eq", &[("manifest.bin", &m), ("main.rvx", &module)], 1);
+    let (mut manifest, _) = with_extension(&f, "eq", &good, 1);
     manifest.core = None;
     assert!(manifest.validate("0.2.0").is_err());
-    let (mut manifest, _) =
-        with_extension(&f, "eq", &[("manifest.bin", &m), ("main.rvx", &module)], 1);
+    let (mut manifest, _) = with_extension(&f, "eq", &good, 1);
     manifest.core.as_mut().unwrap().firmware_build_id ^= 1;
     assert!(manifest.validate("0.2.0").is_err());
 
-    // Content-level rejections happen before signing and at load.
-    let other = Core {
-        firmware_build_id: c.firmware_build_id ^ 1,
-        ..c.clone()
+    // Content-level rejections happen before signing and at load: the loader's checks.
+    let edit = |at: usize, value: u32| {
+        let mut file = good.clone();
+        put(&mut file, at, value);
+        file
     };
-    type Case = (&'static str, Vec<(&'static str, Vec<u8>)>);
-    let cases: Vec<Case> = vec![
+    let entry = |index: usize, field: usize| CATALOG + index * 20 + field;
+    let cases: Vec<(&str, &str, Vec<u8>)> = vec![
+        ("eq", "not an rvx", b"ELF\x7f".to_vec()),
+        ("eq", "format 0", edit(4, 0)),
         (
-            "not an rvx",
-            vec![
-                ("manifest.bin", m.clone()),
-                ("main.rvx", b"ELF\x7f".to_vec()),
-            ],
-        ),
-        (
+            "eq",
             "other firmware",
-            vec![
-                ("manifest.bin", m.clone()),
-                ("main.rvx", rvx("eq", "main", &other, 0, 0)),
-            ],
+            edit(12, core().firmware_build_id ^ 1),
         ),
+        ("eq", "other api", edit(8, 2 << 16)),
+        ("ex", "manifest id", good.clone()),
+        ("eq", "fewer entries than modules", edit(ENTRY_COUNT, 1)),
+        ("eq", "residents past the catalog", edit(RESIDENT_COUNT, 3)),
+        ("eq", "catalog past the end", edit(ENTRY_COUNT, 4000)),
+        ("eq", "truncated payload", good[..good.len() - 4].to_vec()),
+        ("eq", "unaligned payload", edit(entry(2, 8), 0x105)),
         (
-            "wrong module id",
-            vec![
-                ("manifest.bin", m.clone()),
-                ("main.rvx", rvx("eq", "other", &c, 0, 0)),
-            ],
+            "eq",
+            "payload before the catalog ends",
+            edit(entry(2, 8), 28),
         ),
+        ("eq", "raw sizes differ", edit(entry(3, 16), 7)),
+        ("eq", "module kind after the modules", {
+            let mut file = good.clone();
+            file[entry(2, 4)] = 0;
+            file
+        }),
+        ("eq", "asset kind among the modules", {
+            let mut file = good.clone();
+            file[entry(1, 4)] = 1;
+            file
+        }),
         (
-            "size mismatch",
-            vec![
-                ("manifest.bin", m.clone()),
-                ("main.rvx", {
-                    let mut x = rvx("eq", "main", &c, 4, 0);
-                    x.push(0);
-                    x
-                }),
-            ],
+            "eq",
+            "two entries share a name",
+            edit(entry(3, 0), 0x5c0d8278),
         ),
-        (
-            "manifest id",
-            vec![
-                ("manifest.bin", manifest_bin("ex", &["main"], 1)),
-                ("main.rvx", module.clone()),
-            ],
-        ),
-        (
-            "manifest api",
-            vec![
-                ("manifest.bin", manifest_bin("eq", &["main"], 2)),
-                ("main.rvx", module.clone()),
-            ],
-        ),
-        (
-            "extra file",
-            vec![
-                ("manifest.bin", m.clone()),
-                ("main.rvx", module.clone()),
-                ("spare.rvx", rvx("eq", "spare", &c, 0, 0)),
-            ],
-        ),
-        (
-            "missing module",
-            vec![
-                ("manifest.bin", manifest_bin("eq", &["main", "dsp"], 1)),
-                ("main.rvx", module.clone()),
-            ],
-        ),
-        (
-            "main not first",
-            vec![
-                ("manifest.bin", manifest_bin("eq", &["dsp", "main"], 1)),
-                ("main.rvx", module.clone()),
-                ("dsp.rvx", rvx("eq", "dsp", &c, 0, 0)),
-            ],
-        ),
+        ("eq", "module size differs", edit(MAIN_PAYLOAD + 12, 2)),
+        ("eq", "entry outside text", edit(MAIN_PAYLOAD + 16, 8)),
     ];
-    for (label, files) in cases {
-        let refs: Vec<(&str, &[u8])> = files.iter().map(|(n, b)| (*n, b.as_slice())).collect();
-        let (manifest, assets) = with_extension(&f, "eq", &refs, 1);
+    for (id, label, file) in cases {
+        let (manifest, assets) = with_extension(&f, id, &file, 1);
         assert!(write_signed(&f, &manifest, &assets).is_err(), "{label}");
         assert!(f.load().is_err(), "{label}");
     }

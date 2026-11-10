@@ -58,13 +58,13 @@ pub(super) fn install(
         ),
     ];
     // Extension files follow the core so a failed upload never leaves a core
-    // that expects modules which are not there yet.
-    for (index, (path, bytes)) in artifacts.extensions.iter().enumerate() {
+    // that expects extensions which are not there yet.
+    for (index, file) in artifacts.extensions.iter().enumerate() {
         files.push((
             format!("uploadExtension{index}"),
-            path.rsplit('/').nth(1).unwrap_or(path).to_owned(),
-            format!("/{path}"),
-            bytes,
+            file.id.clone(),
+            format!("/{}", file.path),
+            &file.bytes,
         ));
     }
     for (stage, name, destination, bytes) in files {

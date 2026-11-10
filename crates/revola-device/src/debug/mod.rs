@@ -73,7 +73,7 @@ impl std::str::FromStr for Button {
 /// Bytes an extension holds, from the core's records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ExtensionHeap {
-    pub directory: String,
+    pub file: String,
     pub owner: u32,
     pub live: u32,
     pub peak: u32,
@@ -256,7 +256,7 @@ impl Debugger {
         ]
         .into_iter()
         .map(|o| o as usize + 4)
-        .chain([layout.directory as usize + 33])
+        .chain([layout.file as usize + 33])
         .max()
         .unwrap();
         let mut extensions = Vec::new();
@@ -269,10 +269,10 @@ impl Debugger {
             let b = self.read(record, span)?;
             let word =
                 |o: u16| u32::from_le_bytes(b[o as usize..o as usize + 4].try_into().unwrap());
-            let name = &b[layout.directory as usize..layout.directory as usize + 33];
+            let name = &b[layout.file as usize..layout.file as usize + 33];
             let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
             extensions.push(ExtensionHeap {
-                directory: String::from_utf8_lossy(&name[..end]).into_owned(),
+                file: String::from_utf8_lossy(&name[..end]).into_owned(),
                 owner: word(layout.owner),
                 live: word(layout.live),
                 peak: word(layout.peak),

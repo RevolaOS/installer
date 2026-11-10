@@ -42,10 +42,10 @@ A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signatur
 | `compatibility` | target, hardware versions, BootROM hash |
 | `core` | `api` (the `rv_api` major) and `firmware_build_id` of the pinned OSOS |
 | `components` | `usb_helper`, `osos`, `companion`, `nor`, each with a `format` and named files |
-| `extensions` | id to `{format, version, api, files}`; files are `manifest.bin` plus `.rvx` modules |
+| `extensions` | id to `{format, version, api, file}`; `file` is the SHA-256 of the extension's one `.rvx` |
 | `assets` | hash to size |
 
-Extension ids are lower-case ASCII, at most 32 characters; FAT32 is case-insensitive and may return a short name in upper case, so nothing may depend on the case of a directory name. `core.firmware_build_id` is the first eight hex digits of the pinned decrypted OSOS SHA-256 (`0x660eb6ff` for 2.0.5) and must match `firmware/apple.json`. Each extension's `manifest.bin` (revola `tools/manifest.py` layout, version 1) must carry the package id, an API major equal to `core.api`, and a module list whose `<name>.rvx` files are exactly the other files in the package, `main` first. Each `.rvx` header (format 1) must carry that API major, the firmware build id, the FNV-1a hash of `<id>/<name>` and sizes that add up to the file length. The installer uploads the files to `/Revola/Extensions/<id>/` after `osos-cfw.bin`; the helper creates missing directories.
+Extension ids are lower-case ASCII, at most 32 characters; FAT32 is case-insensitive and may return a short name in upper case, so nothing may depend on the case of a file name. `core.firmware_build_id` is the first eight hex digits of the pinned decrypted OSOS SHA-256 (`0x660eb6ff` for 2.0.5) and must match `firmware/apple.json`. Each `.rvx` (revola `core/loader/rvx.h`, format 1) is checked as the core's loader checks it: the header carries `core.api` as its API major and the firmware build id; the manifest (version 2) carries the package id and the same API major, with `main` first; the catalog fits the file, lists the manifest's modules first and then the assets, with word-aligned payloads inside the file and module sizes that add up. The installer uploads each file to `/Revola/Extensions/<id>.rvx` after `osos-cfw.bin`; the helper creates missing directories.
 
 `revola bundle export --spec FILE --base DIR --out DIR` builds a bundle from a specification with the same fields minus `schema` and `assets`, with file paths instead of hashes; `sign`, `pack`, `inspect`, `fetch` and `assemble` operate on the result.
 

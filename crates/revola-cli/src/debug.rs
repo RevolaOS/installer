@@ -385,7 +385,7 @@ fn write_heap_line(elapsed: Duration, heap: &HeapReport, out: &mut impl Write) -
         heap.total
     )?;
     for e in &heap.extensions {
-        write!(out, "  {} {} (peak {})", e.directory, e.live, e.peak)?;
+        write!(out, "  {} {} (peak {})", e.file, e.live, e.peak)?;
     }
     writeln!(out)
 }
@@ -547,7 +547,7 @@ pub(super) fn run(args: Args, json: bool) -> CliResult<u8> {
                     writeln!(
                         out,
                         "{:<33} {:>10} {:>10} {:>8}",
-                        e.directory, e.live, e.peak, e.failure
+                        e.file, e.live, e.peak, e.failure
                     )?;
                 }
             }

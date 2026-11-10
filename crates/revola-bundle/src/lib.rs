@@ -30,7 +30,6 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SCHEMA: u32 = 3;
 pub const EXTENSIONS_ROOT: &str = "/Revola/Extensions";
 pub const EXTENSION_FORMAT: &str = "revola-extension-v1";
-const MAX_EXTENSION_FILES: usize = extension::MAX_MODULES + 1;
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
 #[derive(Debug, thiserror::Error)]
@@ -84,15 +83,15 @@ pub struct Core {
     pub firmware_build_id: u32,
 }
 
-/// One extension package, installed as `/Revola/Extensions/<id>/<file>`.
+/// One extension package, installed as `/Revola/Extensions/<id>.rvx`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Extension {
     pub format: String,
     pub version: String,
     pub api: u32,
-    /// On-device file name to SHA-256; `manifest.bin` plus `.rvx` modules.
-    pub files: BTreeMap<String, String>,
+    /// SHA-256 of the `.rvx` file.
+    pub file: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -113,6 +112,7 @@ pub struct Manifest {
 
 /// A file to upload, with its absolute path on the device.
 pub struct ExtensionFile<'a> {
+    pub id: &'a str,
     pub destination: String,
     pub bytes: &'a [u8],
 }
@@ -198,22 +198,13 @@ impl Manifest {
                 || extension.format != EXTENSION_FORMAT
                 || Version::parse(&extension.version).is_err()
                 || Some(extension.api) != self.core.as_ref().map(|core| core.api)
-                || !extension.files.contains_key("manifest.bin")
-                || extension.files.len() < 2
-                || extension.files.len() > MAX_EXTENSION_FILES
-                || extension
-                    .files
-                    .keys()
-                    .any(|name| name != "manifest.bin" && !valid_module_name(name))
             {
                 return Err(invalid(format!("Invalid extension package: {id}")));
             }
-            for hash in extension.files.values() {
-                if !self.assets.contains_key(hash) {
-                    return Err(invalid("Invalid extension asset reference"));
-                }
-                referenced.insert(hash);
+            if !self.assets.contains_key(&extension.file) {
+                return Err(invalid("Invalid extension asset reference"));
             }
+            referenced.insert(&extension.file);
         }
         let mut total = 0usize;
         for (hash, asset) in &self.assets {
@@ -271,42 +262,25 @@ impl VerifiedBundle {
         .check_extensions()
     }
 
-    /// Each extension's `manifest.bin` must name exactly the module files in the package,
-    /// and every module header must match this bundle's core.
+    /// Every extension file must load on this bundle's core: the checks of the core's loader.
     fn check_extensions(self) -> Result<Self> {
         if let Some(core) = &self.manifest.core {
             for (id, ext) in &self.manifest.extensions {
-                let names =
-                    extension::module_names(id, &self.assets[&ext.files["manifest.bin"]], core)?;
-                if ext.files.keys().cloned().collect::<BTreeSet<_>>()
-                    != extension::expected_files(&names)
-                {
-                    return Err(invalid(format!(
-                        "{id}: files differ from the manifest's modules"
-                    )));
-                }
-                for name in &names {
-                    let image = &self.assets[&ext.files[&format!("{name}.rvx")]];
-                    extension::check_module(id, name, image, core)?;
-                }
+                extension::check_package(id, &self.assets[&ext.file], core)?;
             }
         }
         Ok(self)
     }
 
-    /// Extension files in upload order, ids and names sorted.
+    /// Extension files in upload order, by id.
     pub fn extension_files(&self) -> Vec<ExtensionFile<'_>> {
         self.manifest
             .extensions
             .iter()
-            .flat_map(|(id, extension)| {
-                extension
-                    .files
-                    .iter()
-                    .map(move |(name, hash)| ExtensionFile {
-                        destination: format!("{EXTENSIONS_ROOT}/{id}/{name}"),
-                        bytes: &self.assets[hash],
-                    })
+            .map(|(id, extension)| ExtensionFile {
+                id,
+                destination: format!("{EXTENSIONS_ROOT}/{id}.rvx"),
+                bytes: &self.assets[&extension.file],
             })
             .collect()
     }
@@ -450,15 +424,6 @@ fn valid_extension_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
-}
-
-pub(crate) fn valid_module_name(value: &str) -> bool {
-    value.strip_suffix(".rvx").is_some_and(|stem| {
-        !stem.is_empty()
-            && stem
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
-    })
 }
 
 fn valid_name(value: &str) -> bool {

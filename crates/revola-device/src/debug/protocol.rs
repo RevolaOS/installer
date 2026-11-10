@@ -60,7 +60,7 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
 pub struct RecordLayout {
     pub next: u16,
     pub owner: u16,
-    pub directory: u16,
+    pub file: u16,
     pub live: u16,
     pub peak: u16,
     pub failure: u16,
@@ -112,7 +112,7 @@ impl Info {
             record: RecordLayout {
                 next: u16_at(b, 36),
                 owner: u16_at(b, 38),
-                directory: u16_at(b, 40),
+                file: u16_at(b, 40),
                 live: u16_at(b, 42),
                 peak: u16_at(b, 44),
                 failure: u16_at(b, 46),

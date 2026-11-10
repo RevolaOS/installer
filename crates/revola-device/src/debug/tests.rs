@@ -127,7 +127,7 @@ fn info_reply_is_parsed_and_checked() {
             record: RecordLayout {
                 next: 0,
                 owner: 4,
-                directory: 8,
+                file: 8,
                 live: 0x2c,
                 peak: 0x30,
                 failure: 0x34,
@@ -277,12 +277,12 @@ fn heap_walks_the_extension_records() {
     for (i, v) in [0, 4, 8, 0x2c, 0x30, 0x34].into_iter().enumerate() {
         put16(&mut info, 36 + i * 2, v);
     }
-    let record = |next: u32, owner: u32, directory: &str, live: u32, peak: u32, failure: u8| {
+    let record = |next: u32, owner: u32, file: &str, live: u32, peak: u32, failure: u8| {
         let mut b = vec![0; 0x38];
         for (at, v) in [(0, next), (4, owner), (0x2c, live), (0x30, peak)] {
             put32(&mut b, at, v);
         }
-        b[8..8 + directory.len()].copy_from_slice(directory.as_bytes());
+        b[8..8 + file.len()].copy_from_slice(file.as_bytes());
         b[0x34] = failure;
         b
     };
@@ -312,14 +312,14 @@ fn heap_walks_the_extension_records() {
             free: 0x0030_0000,
             extensions: vec![
                 ExtensionHeap {
-                    directory: "usb-debug".into(),
+                    file: "usb-debug".into(),
                     owner: 1,
                     live: 4096,
                     peak: 8192,
                     failure: 0,
                 },
                 ExtensionHeap {
-                    directory: "x".repeat(33),
+                    file: "x".repeat(33),
                     owner: 2,
                     live: 0,
                     peak: 512,

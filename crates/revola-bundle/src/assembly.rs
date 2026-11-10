@@ -326,8 +326,16 @@ pub struct Artifacts {
     pub osos: Vec<u8>,
     pub companion: Vec<u8>,
     pub nor_installer: Vec<u8>,
-    /// Device path without the leading slash, and contents, in upload order.
-    pub extensions: Vec<(String, Vec<u8>)>,
+    /// In upload order.
+    pub extensions: Vec<ExtensionArtifact>,
+}
+
+/// One extension file to upload.
+pub struct ExtensionArtifact {
+    pub id: String,
+    /// Device path without the leading slash.
+    pub path: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -352,7 +360,7 @@ impl Artifacts {
         files.extend(
             self.extensions
                 .iter()
-                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+                .map(|file| (file.path.as_str(), file.bytes.as_slice())),
         );
         files
     }
@@ -420,7 +428,11 @@ pub fn assemble_with_hardware_policy(
         extensions: bundle
             .extension_files()
             .into_iter()
-            .map(|file| (file.destination[1..].to_owned(), file.bytes.to_vec()))
+            .map(|file| ExtensionArtifact {
+                id: file.id.to_owned(),
+                path: file.destination[1..].to_owned(),
+                bytes: file.bytes.to_vec(),
+            })
             .collect(),
     })
 }

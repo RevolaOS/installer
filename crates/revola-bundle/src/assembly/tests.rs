@@ -194,12 +194,16 @@ fn output_is_created_exclusively_with_a_report() {
         osos: vec![1, 2],
         companion: vec![3],
         nor_installer: vec![4],
-        extensions: vec![("Revola/Extensions/eq/main.rvx".into(), vec![5])],
+        extensions: vec![ExtensionArtifact {
+            id: "eq".into(),
+            path: "Revola/Extensions/eq.rvx".into(),
+            bytes: vec![5],
+        }],
     };
     let report = artifacts.write(&out).unwrap();
     assert_eq!(fs::read(out.join("osos-cfw.bin")).unwrap(), [1, 2]);
     assert_eq!(
-        fs::read(out.join("Revola/Extensions/eq/main.rvx")).unwrap(),
+        fs::read(out.join("Revola/Extensions/eq.rvx")).unwrap(),
         [5]
     );
     assert_eq!(report.files["cfw-loader.bin"].sha256, sha256(&[3]));

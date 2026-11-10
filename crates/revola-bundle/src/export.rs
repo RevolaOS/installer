@@ -43,14 +43,13 @@ pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manife
     let files = manifest
         .components
         .values_mut()
-        .map(|component| &mut component.files)
+        .flat_map(|component| component.files.values_mut())
         .chain(
             manifest
                 .extensions
                 .values_mut()
-                .map(|extension| &mut extension.files),
-        )
-        .flat_map(|files| files.values_mut());
+                .map(|extension| &mut extension.file),
+        );
     for filename in files {
         let bytes = read_file(&base.join(&*filename), MAX_ASSET_BYTES)?;
         let hash = sha256(&bytes);
