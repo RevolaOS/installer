@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 const RVX_MAGIC: u32 = 0x3058_5652; // RVX0
 const RVX_FORMAT: u32 = 1;
-const HEADER: usize = 28;
+const HEADER: usize = 32;
 const ENTRY: usize = 20;
 const MODULE_HEADER: usize = 20;
 const MAX_ENTRIES: usize = 0xffff;
