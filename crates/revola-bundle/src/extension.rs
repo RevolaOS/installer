@@ -23,7 +23,7 @@ const CODEC_LZ: u8 = 1;
 const MANIFEST_MAGIC: u32 = 0x464D_5652; // RVMF
 const MANIFEST_VERSION: u32 = 2;
 const MANIFEST_MAX: usize = 1024;
-const MANIFEST_HEADER: usize = 40;
+const MANIFEST_HEADER: usize = 44;
 const MODULE_RECORD: usize = 6;
 const SITE_RECORD: usize = 12;
 const MAX_MODULES: usize = 15;
@@ -161,7 +161,7 @@ fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
         let end = tail.iter().position(|b| *b == 0).unwrap();
         std::str::from_utf8(&tail[..end]).map_err(|_| bad("string encoding"))
     };
-    for text in 0..6 {
+    for text in 0..7 {
         string(half(manifest, 28 + 2 * text))?;
     }
     if string(half(manifest, 28))? != id {
