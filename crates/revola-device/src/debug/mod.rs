@@ -8,6 +8,7 @@
 mod display;
 mod protocol;
 mod screen;
+mod symbols;
 #[cfg(test)]
 mod tests;
 
@@ -30,10 +31,11 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
+use symbols::*;
 
 const NORMAL_MODE: u16 = 0x1261;
 const TIMEOUT: Duration = Duration::from_secs(1);
-/// Wheel positions per scroll step; the wheel task needs at least 6 to move.
+/// Wheel positions per injected movement; list rows also depend on the carried remainder.
 const STEP_POSITIONS: u16 = 8;
 const WHEEL_POSITIONS: u16 = 96;
 /// Time the wheel task needs to see each injected position on its own; two
@@ -256,30 +258,72 @@ impl Debugger {
         Ok(())
     }
 
-    /// Turn the wheel by `steps` list rows: positive is clockwise (down a list).
+    /// Inject wheel movements: positive is clockwise (down a list).
+    /// Apple carries a remainder, so a movement is not necessarily one row.
     pub fn scroll(&mut self, steps: i32) -> Result<()> {
         if steps == 0 {
             return Ok(());
         }
+        let firmware = u32::from_str_radix(
+            &crate::firmware::current().inputs["osos.bin"].sha256[..8],
+            16,
+        )
+        .expect("valid pinned firmware fingerprint");
+        if self.info.firmware_id != firmware {
+            return Err(invalid(
+                "Wheel synchronization requires the pinned Apple firmware",
+            ));
+        }
         let mut position: u16 = 0;
         self.out(INPUT, INPUT_TOUCH, position)?;
-        sleep(STEP_PAUSE);
-        for _ in 0..steps.unsigned_abs() {
-            if let Some(last) = self.last_step {
-                sleep(STEP_INTERVAL.saturating_sub(last.elapsed()));
+        let result = (|| {
+            sleep(STEP_PAUSE);
+            for _ in 0..steps.unsigned_abs() {
+                if let Some(last) = self.last_step {
+                    sleep(STEP_INTERVAL.saturating_sub(last.elapsed()));
+                }
+                let (previous, _, _) = self.wheel_state()?;
+                position = if steps > 0 {
+                    (position + STEP_POSITIONS) % WHEEL_POSITIONS
+                } else {
+                    (position + WHEEL_POSITIONS - STEP_POSITIONS) % WHEEL_POSITIONS
+                };
+                self.out(INPUT, INPUT_TOUCH, position)?;
+                self.last_step = Some(Instant::now());
+                self.wait_wheel(previous, Duration::from_secs(2))?;
             }
-            position = if steps > 0 {
-                (position + STEP_POSITIONS) % WHEEL_POSITIONS
-            } else {
-                (position + WHEEL_POSITIONS - STEP_POSITIONS) % WHEEL_POSITIONS
-            };
-            self.out(INPUT, INPUT_TOUCH, position)?;
-            self.last_step = Some(Instant::now());
-        }
-        sleep(STEP_PAUSE);
-        self.out(INPUT, INPUT_LIFT, 0)?;
+            Ok(())
+        })();
+        let lift = self.out(INPUT, INPUT_LIFT, 0);
+        result?;
+        lift?;
         sleep(STEP_PAUSE);
         Ok(())
+    }
+
+    fn wheel_state(&mut self) -> Result<(u32, u32, bool)> {
+        let b = self.read(ADDR_WHEEL_STATE, WHEEL_STATE_REPORTED_POSITION + 4)?;
+        let word = |at| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        Ok((
+            word(WHEEL_STATE_POSITION),
+            word(WHEEL_STATE_REPORTED_POSITION),
+            b[WHEEL_STATE_NOTIFY_PENDING] != 0,
+        ))
+    }
+
+    fn wait_wheel(&mut self, previous: u32, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let (position, reported, pending) = self.wheel_state()?;
+            // Lift resets the reported position and discards unread motion.
+            if position != previous && position == reported && !pending {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(invalid("The UI did not consume the wheel movement"));
+            }
+            sleep(Duration::from_millis(20));
+        }
     }
 
     /// The composited screen as 320x240 RGB.
@@ -394,10 +438,51 @@ impl Debugger {
     }
 
     /// Time a core site from the device's next UI timer tick; `None` stops
-    /// timing every site.
-    pub fn time_site(&mut self, site: Option<u32>) -> Result<()> {
+    /// timing every site. Returns false if the requested state was not observed.
+    pub fn time_site(&mut self, site: Option<u32>) -> Result<bool> {
         let (value, index) = split(site.unwrap_or(0));
-        self.out(TIME_SITE, value, index)
+        self.out(TIME_SITE, value, index)?;
+        // The device has one pending TIME_SITE slot. Wait for the UI task to
+        // consume it before another request can overwrite it.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let timings = self.timings()?;
+            let applied = match site {
+                Some(id) => timings.iter().any(|timing| timing.site == id),
+                None => timings.is_empty(),
+            };
+            if applied || Instant::now() >= deadline {
+                return Ok(applied);
+            }
+            sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Collect site timings and stop all timing hooks, including on failure.
+    /// Unsupported sites are absent from the returned records. Registration
+    /// stops at the first unacknowledged request because the device has one slot.
+    pub fn time_sites(&mut self, sites: &[u32], duration: Duration) -> Result<Vec<SiteTiming>> {
+        let result = (|| {
+            for site in sites {
+                if !self.time_site(Some(*site))? {
+                    break;
+                }
+            }
+            sleep(duration);
+            self.timings()
+        })();
+        let cleanup = match self.time_site(None) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(invalid(
+                "Timing may still be active: stop request timed out",
+            )),
+            Err(error) => Err(invalid(format!("Timing may still be active: {error}"))),
+        };
+        match (result, cleanup) {
+            (Ok(timings), Ok(())) => Ok(timings),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => Err(invalid(format!("{error}; {cleanup}"))),
+        }
     }
 
     pub fn timings(&mut self) -> Result<Vec<SiteTiming>> {
@@ -551,6 +636,8 @@ impl Debugger {
     fn scroll_to(&mut self, label: &str, steps: &mut Vec<String>) -> Result<Screen> {
         let mut screen = self.screen()?;
         let mut seen_bottom = false;
+        let mut unchanged_direction = 0;
+        let mut unchanged_steps = 0;
         for _ in 0..200 {
             let selected = screen.selected.unwrap_or(0);
             let direction: i32 = match screen.row(label) {
@@ -562,9 +649,7 @@ impl Debugger {
             };
             let before = screen.clone();
             self.scroll(direction)?;
-            // The UI applies the step after the request; the preview pane beside
-            // the list changes on its own, so only the rows count. No change
-            // means the end of the list.
+            // The preview changes independently; compare only list rows.
             let deadline = Instant::now() + Duration::from_secs(1);
             loop {
                 screen = self.screen()?;
@@ -582,10 +667,22 @@ impl Debugger {
                     .map_or("?", |r| r.label.as_str())
             ));
             if screen.rows == before.rows {
-                if seen_bottom && direction < 0 {
-                    break;
+                unchanged_steps = if direction == unchanged_direction {
+                    unchanged_steps + 1
+                } else {
+                    1
+                };
+                unchanged_direction = direction;
+                // A direction change or activation may consume one movement
+                // without changing rows; two unchanged movements mark an end.
+                if unchanged_steps >= 2 {
+                    if seen_bottom && direction < 0 {
+                        break;
+                    }
+                    seen_bottom = true;
                 }
-                seen_bottom = true;
+            } else {
+                unchanged_steps = 0;
             }
         }
         Err(invalid(format!("No row '{label}' on '{}'", screen.title)))

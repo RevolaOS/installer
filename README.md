@@ -29,7 +29,23 @@ target/release/revola bundle apply-recipe --recipe osos.json --data osos.data --
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
-Device commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files. Bundle components keep the schema 2 format names from RepriseOS so existing recipes assemble unchanged.
+Installation and BootROM inspection commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files. Bundle components keep the schema 2 format names from RepriseOS so existing recipes assemble unchanged.
+
+### USB debugging
+
+`revola debug --help` lists commands for normal-mode devices running the USB Debug extension. Enable it in Settings > Extensions. While enabled, USB stays in the running UI instead of disk mode; disable it and reconnect the cable to sync. Build the extension with the SDK matching the installed core. The wire protocol is documented in the extensions repository's `usb-debug/README.md`.
+
+`scroll` injects wheel movements, not exact row counts. It synchronizes against Apple's wheel state and refuses firmware other than the pinned image. Screen parsing and `goto` describe and navigate the current UI; they cannot make a screen check and later input atomic. In particular, scrolling Now Playing changes volume.
+
+`time-site` attempts to stop timing after success or failure. If the stop is not acknowledged, the command fails and warns that timing may still be active.
+
+The wheel addresses and offsets in `crates/revola-device/src/debug/symbols.rs` are generated from the canonical firmware header. From the workspace root, verify them with:
+
+```sh
+python3 installer/tools/debug_symbols.py --check revola/firmware/osos-2.0.5.h
+```
+
+Omit `--check` to regenerate after the firmware symbols have been verified and copied from reversing. Do not edit the Rust constants by hand.
 
 ### Bundles
 

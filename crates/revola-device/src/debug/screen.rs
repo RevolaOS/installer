@@ -12,6 +12,9 @@ const STATUS_X: i16 = 260;
 const HALF_WIDTH: i16 = 160;
 /// Strings whose tops are this close share a row.
 const ROW_SLACK: i16 = 4;
+/// OSOS 2.0.5 thumbnail lists: labels repeat every 55 px, details sit 29 px below.
+const THUMBNAIL_HEIGHT: i16 = 55;
+const THUMBNAIL_DETAIL: i16 = 29;
 /// View class of the selected row's text in OSOS 2.0.5.
 pub(crate) const SELECTED_TEXT_VIEW: u32 = 0x0899_3504;
 
@@ -58,7 +61,48 @@ pub(crate) fn describe(drawn: &[DrawnText]) -> Screen {
             body.push(t);
         }
     }
-    body.sort_by_key(|t| (t.top, t.left));
+    body.sort_by_key(|t| (t.top, t.left, t.view_class != SELECTED_TEXT_VIEW));
+    body.dedup_by(|b, a| a.top == b.top && a.left == b.left && a.text == b.text);
+    // Anchor the row grid to the selected label; an absent artist/detail
+    // must not turn the next album's label into the preceding album's value.
+    let selected_top = body
+        .iter()
+        .find(|t| t.view_class == SELECTED_TEXT_VIEW)
+        .map(|t| t.top);
+    if body.len() >= 2
+        && body[0].left >= 20
+        && body[0].left < HALF_WIDTH
+        && body.iter().all(|t| t.left == body[0].left)
+        && selected_top.is_some_and(|top| {
+            body.iter().all(|t| {
+                let offset = (t.top - top).rem_euclid(THUMBNAIL_HEIGHT);
+                offset == 0 || (offset == THUMBNAIL_DETAIL && t.view_class != SELECTED_TEXT_VIEW)
+            })
+        })
+    {
+        screen.state = "list";
+        let top = selected_top.unwrap();
+        for label in body
+            .iter()
+            .filter(|t| (t.top - top).rem_euclid(THUMBNAIL_HEIGHT) == 0)
+        {
+            let index = screen.rows.len();
+            let selected = label.view_class == SELECTED_TEXT_VIEW;
+            if selected {
+                screen.selected = Some(index);
+            }
+            screen.rows.push(Row {
+                index,
+                label: label.text.trim_end().to_string(),
+                value: body
+                    .iter()
+                    .find(|t| t.top == label.top + THUMBNAIL_DETAIL)
+                    .map(|t| t.text.trim_end().to_string()),
+                selected,
+            });
+        }
+        return screen;
+    }
     // A list is two or more bands that each start at the left edge.
     let mut bands: Vec<Vec<&DrawnText>> = Vec::new();
     for t in body.iter().copied() {
@@ -165,6 +209,74 @@ mod tests {
         assert_eq!(s.rows[1].label, "Podcasts");
         assert_eq!(s.rows[1].value, None);
         assert_eq!(s.selected, Some(1));
+    }
+
+    #[test]
+    fn thumbnail_album_list_keeps_artist_with_its_album() {
+        let s = describe(&[
+            t("Albums", 2, 6, 273, 1),
+            t("All Songs", 20, 65, 293, 1),
+            t("All Songs", 20, 65, 293, SELECTED_TEXT_VIEW),
+            t("3491 Songs", 49, 65, 293, 1),
+            t("666", 75, 65, 314, 1),
+            t("Aphrodite’s Child     ", 104, 65, 314, 1),
+            t("777", 130, 65, 314, 1),
+            t("Latto     ", 159, 65, 314, 1),
+        ]);
+        assert_eq!(s.state, "list");
+        assert_eq!(s.rows.len(), 3);
+        assert_eq!(s.selected, Some(0));
+        assert_eq!(
+            s.row("666").unwrap().value.as_deref(),
+            Some("Aphrodite’s Child")
+        );
+    }
+
+    #[test]
+    fn inset_text_without_a_selected_row_is_not_a_thumbnail_list() {
+        let s = describe(&[
+            t("Text", 2, 6, 273, 1),
+            t("One", 40, 65, 314, 1),
+            t("Two", 70, 65, 314, 1),
+            t("Three", 100, 65, 314, 1),
+            t("Four", 130, 65, 314, 1),
+        ]);
+        assert_eq!(s.state, "other");
+        assert!(s.rows.is_empty());
+    }
+
+    #[test]
+    fn missing_thumbnail_details_do_not_shift_labels() {
+        for missing in [49, 104, 159] {
+            let drawn = [
+                t("Albums", 2, 6, 273, 1),
+                t("All Songs", 20, 65, 293, 1),
+                t("3491 Songs", 49, 65, 293, 1),
+                t("666", 75, 65, 314, SELECTED_TEXT_VIEW),
+                t("Aphrodite’s Child", 104, 65, 314, 1),
+                t("777", 130, 65, 314, 1),
+                t("Latto", 159, 65, 314, 1),
+            ];
+            let drawn: Vec<_> = drawn.into_iter().filter(|t| t.top != missing).collect();
+            let s = describe(&drawn);
+            assert_eq!(
+                s.rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+                ["All Songs", "666", "777"]
+            );
+            assert_eq!(s.selected, Some(1));
+            assert_eq!(s.rows[((missing - 49) / 55) as usize].value, None);
+        }
+    }
+
+    #[test]
+    fn thumbnail_labels_without_details_remain_separate_rows() {
+        let s = describe(&[
+            t("Albums", 2, 6, 273, 1),
+            t("One", 20, 65, 314, SELECTED_TEXT_VIEW),
+            t("Two", 75, 65, 314, 1),
+        ]);
+        assert_eq!(s.rows.len(), 2);
+        assert!(s.rows.iter().all(|r| r.value.is_none()));
     }
 
     #[test]

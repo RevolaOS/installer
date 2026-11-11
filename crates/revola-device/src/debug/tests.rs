@@ -18,6 +18,7 @@ struct Device {
     /// Replies to other IN requests, by request.
     replies: Vec<(u8, Vec<u8>)>,
     requests: Vec<Request>,
+    fail_requests: Vec<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -59,17 +60,35 @@ impl Transport for Fake {
     fn read(&mut self, ty: u8, req: u8, val: u16, idx: u16, data: &mut [u8]) -> Result<usize> {
         let mut device = self.0.borrow_mut();
         device.requests.push((ty, req, val, idx, data.len()));
+        if device.fail_requests.contains(&device.requests.len()) {
+            return Err(invalid("injected read failure"));
+        }
         assert_eq!(ty, VENDOR_IN);
         let reply = match req {
             INFO => device.info.clone(),
             READ => {
                 let address = u32::from(val) | u32::from(idx) << 16;
-                match device
+                let found = device
                     .memory
                     .iter()
-                    .find_map(|(base, bytes)| bytes.get(address.checked_sub(*base)? as usize..))
-                {
-                    Some(bytes) => bytes.to_vec(),
+                    .enumerate()
+                    .find_map(|(i, (base, bytes))| {
+                        Some((
+                            i,
+                            bytes.get(address.checked_sub(*base)? as usize..)?.to_vec(),
+                        ))
+                    });
+                match found {
+                    Some((i, bytes)) => {
+                        let base = device.memory[i].0;
+                        if device.memory[i + 1..]
+                            .iter()
+                            .any(|(other, _)| *other == base)
+                        {
+                            device.memory.remove(i);
+                        }
+                        bytes
+                    }
                     None => {
                         return Err(crate::Error::Usb {
                             operation: "debug request",
@@ -79,12 +98,21 @@ impl Transport for Fake {
                 }
             }
             SCREEN_DATA => device.screens.pop_front().expect("Unexpected SCREEN_DATA"),
-            other => device
-                .replies
-                .iter()
-                .find(|(request, _)| *request == other)
-                .map(|(_, bytes)| bytes.clone())
-                .unwrap_or_else(|| panic!("Unexpected IN request {other:#x}")),
+            other => {
+                let index = device
+                    .replies
+                    .iter()
+                    .position(|(request, _)| *request == other)
+                    .unwrap_or_else(|| panic!("Unexpected IN request {other:#x}"));
+                let reply = device.replies[index].1.clone();
+                if device.replies[index + 1..]
+                    .iter()
+                    .any(|(request, _)| *request == other)
+                {
+                    device.replies.remove(index);
+                }
+                reply
+            }
         };
         let n = reply.len().min(data.len());
         data[..n].copy_from_slice(&reply[..n]);
@@ -93,10 +121,11 @@ impl Transport for Fake {
 
     fn write(&mut self, ty: u8, req: u8, val: u16, idx: u16, data: &[u8]) -> Result<usize> {
         assert_eq!(ty, VENDOR_OUT);
-        self.0
-            .borrow_mut()
-            .requests
-            .push((ty, req, val, idx, data.len()));
+        let mut device = self.0.borrow_mut();
+        device.requests.push((ty, req, val, idx, data.len()));
+        if device.fail_requests.contains(&device.requests.len()) {
+            return Err(invalid("injected write failure"));
+        }
         Ok(data.len())
     }
 }
@@ -220,20 +249,74 @@ fn writes_set_the_address_then_send_one_word_per_request() {
     assert!(fake.0.borrow().requests.is_empty());
 }
 
+fn wheel_info() -> Vec<u8> {
+    let mut info = encode::info(64);
+    let firmware = u32::from_str_radix(
+        &crate::firmware::current().inputs["osos.bin"].sha256[..8],
+        16,
+    )
+    .unwrap();
+    put32(&mut info, 8, firmware);
+    info
+}
+
+fn wheel(position: u32, reported: u32, pending: bool) -> Vec<u8> {
+    let mut b = vec![0; WHEEL_STATE_REPORTED_POSITION + 4];
+    put32(&mut b, WHEEL_STATE_POSITION, position);
+    put32(&mut b, WHEEL_STATE_REPORTED_POSITION, reported);
+    b[WHEEL_STATE_NOTIFY_PENDING] = u8::from(pending);
+    b
+}
+
 #[test]
-fn scroll_steps_eight_positions_per_row_in_one_touch() {
+fn scroll_waits_for_new_motion_and_ui_consumption_before_lifting() {
+    let fake = Fake::new(wheel_info());
+    for state in [
+        wheel(0, 0, false), // before injection
+        wheel(0, 0, false), // wheel task has not processed the touch
+        wheel(8, 0, true),  // UI has not consumed the motion
+        wheel(8, 8, true),  // notification has not cleared
+        wheel(8, 8, false),
+    ] {
+        fake.map(ADDR_WHEEL_STATE, state);
+    }
+    let mut debugger = fake.debugger();
+    debugger.scroll(1).unwrap();
+    assert_eq!(fake.requests(READ).len(), 5);
+    let requests = fake.0.borrow();
+    assert_eq!(
+        requests.requests.last(),
+        Some(&(VENDOR_OUT, INPUT, INPUT_LIFT, 0, 0))
+    );
+    assert_eq!(
+        fake.requests(INPUT),
+        [
+            (VENDOR_OUT, INPUT, INPUT_TOUCH, 0, 0),
+            (VENDOR_OUT, INPUT, INPUT_TOUCH, 8, 0),
+            (VENDOR_OUT, INPUT, INPUT_LIFT, 0, 0),
+        ]
+    );
+}
+
+#[test]
+fn scroll_lifts_and_reports_unconsumed_motion() {
+    let fake = Fake::new(wheel_info());
+    fake.map(ADDR_WHEEL_STATE, wheel(0, 0, false));
+    let mut debugger = fake.debugger();
+    let error = debugger.scroll(1).unwrap_err().to_string();
+    assert!(error.contains("did not consume"), "{error}");
+    assert_eq!(
+        fake.requests(INPUT).last(),
+        Some(&(VENDOR_OUT, INPUT, INPUT_LIFT, 0, 0))
+    );
+}
+
+#[test]
+fn scroll_rejects_unknown_firmware_before_injecting() {
     let fake = Fake::new(encode::info(64));
     let mut debugger = fake.debugger();
-
-    let start = Instant::now();
-    debugger.scroll(-3).unwrap();
-    assert!(start.elapsed() >= STEP_INTERVAL * 2);
-    let touch = |position| (VENDOR_OUT, INPUT, INPUT_TOUCH, position, 0);
-    let lift = (VENDOR_OUT, INPUT, INPUT_LIFT, 0, 0);
-    assert_eq!(
-        fake.0.borrow().requests,
-        [touch(0), touch(88), touch(80), touch(72), lift]
-    );
+    assert!(debugger.scroll(1).is_err());
+    assert!(fake.0.borrow().requests.is_empty());
 }
 
 #[test]
@@ -509,12 +592,127 @@ fn hold_and_site_timing_send_their_arguments() {
     let fake = Fake::new(encode::info(512));
     let mut debugger = fake.debugger();
     debugger.hold(Hold::Unlocked).unwrap();
-    debugger.time_site(Some(0x5258_7f80)).unwrap();
-    debugger.time_site(None).unwrap();
+    let mut timing = vec![0; 24];
+    put32(&mut timing, 0, 1);
+    put32(&mut timing, 4, 0x5258_7f80);
+    fake.reply(TIMINGS, timing);
+    assert!(debugger.time_site(Some(0x5258_7f80)).unwrap());
+    fake.0.borrow_mut().replies.clear();
+    fake.reply(TIMINGS, vec![0; 4]);
+    assert!(debugger.time_site(None).unwrap());
     debugger.events(64).unwrap();
     assert_eq!(fake.requests(HOLD)[0].2, 2);
     let sites = fake.requests(TIME_SITE);
     assert_eq!((sites[0].2, sites[0].3), (0x7f80, 0x5258));
     assert_eq!((sites[1].2, sites[1].3), (0, 0));
     assert_eq!(fake.requests(EVENTS)[0].2, 64);
+}
+
+#[test]
+fn site_timing_waits_for_registration_before_sending_the_next_site() {
+    let fake = Fake::new(encode::info(512));
+    let mut first = vec![0; 24];
+    put32(&mut first, 0, 1);
+    put32(&mut first, 4, 17);
+    let mut both = first.clone();
+    both.resize(44, 0);
+    put32(&mut both, 0, 2);
+    put32(&mut both, 24, 23);
+    for reply in [
+        vec![0; 4],
+        first.clone(),
+        first,
+        both.clone(),
+        both,
+        vec![0; 4],
+    ] {
+        fake.reply(TIMINGS, reply);
+    }
+    let mut debugger = fake.debugger();
+    assert!(debugger.time_site(Some(17)).unwrap());
+    assert!(debugger.time_site(Some(23)).unwrap());
+    assert!(debugger.time_site(None).unwrap());
+    let requests: Vec<_> = fake
+        .0
+        .borrow()
+        .requests
+        .iter()
+        .map(|request| request.1)
+        .collect();
+    assert_eq!(
+        requests,
+        [TIME_SITE, TIMINGS, TIMINGS, TIME_SITE, TIMINGS, TIMINGS, TIME_SITE, TIMINGS, TIMINGS]
+    );
+}
+
+#[test]
+fn timing_session_stops_after_registration_and_collection_failures() {
+    for failed in [2, 3] {
+        let fake = Fake::new(encode::info(512));
+        let mut debugger = fake.debugger();
+        fake.0.borrow_mut().fail_requests = vec![failed];
+        if failed == 3 {
+            let mut timing = vec![0; 24];
+            put32(&mut timing, 0, 1);
+            put32(&mut timing, 4, 17);
+            fake.reply(TIMINGS, timing);
+        }
+        fake.reply(TIMINGS, vec![0; 4]);
+        let error = debugger.time_sites(&[17], Duration::ZERO).unwrap_err();
+        assert_eq!(error.to_string(), "injected read failure");
+        assert_eq!(fake.requests(TIME_SITE).last().unwrap().2, 0);
+    }
+}
+
+#[test]
+fn timing_session_reports_both_collection_and_cleanup_errors() {
+    let fake = Fake::new(encode::info(512));
+    let mut debugger = fake.debugger();
+    let mut timing = vec![0; 24];
+    put32(&mut timing, 0, 1);
+    put32(&mut timing, 4, 17);
+    fake.reply(TIMINGS, timing);
+    fake.0.borrow_mut().fail_requests = vec![3, 4];
+    let error = debugger
+        .time_sites(&[17], Duration::ZERO)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("injected read failure"), "{error}");
+    assert!(
+        error.contains("Timing may still be active: injected write failure"),
+        "{error}"
+    );
+}
+
+#[test]
+fn timing_session_requires_stop_acknowledgment() {
+    let fake = Fake::new(encode::info(512));
+    let mut debugger = fake.debugger();
+    let mut timing = vec![0; 24];
+    put32(&mut timing, 0, 1);
+    put32(&mut timing, 4, 17);
+    fake.reply(TIMINGS, timing);
+    let error = debugger
+        .time_sites(&[17], Duration::ZERO)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Timing may still be active: stop request timed out"),
+        "{error}"
+    );
+}
+
+#[test]
+fn timing_session_returns_results_after_cleanup() {
+    let fake = Fake::new(encode::info(512));
+    let mut debugger = fake.debugger();
+    let mut timing = vec![0; 24];
+    put32(&mut timing, 0, 1);
+    put32(&mut timing, 4, 17);
+    fake.reply(TIMINGS, timing.clone());
+    fake.reply(TIMINGS, timing);
+    fake.reply(TIMINGS, vec![0; 4]);
+    let result = debugger.time_sites(&[17], Duration::ZERO).unwrap();
+    assert_eq!(result[0].site, 17);
+    assert_eq!(fake.requests(TIME_SITE).last().unwrap().2, 0);
 }

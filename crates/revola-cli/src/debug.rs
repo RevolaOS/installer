@@ -835,14 +835,10 @@ pub(super) fn run(args: Args, json: bool) -> CliResult<u8> {
                 .iter()
                 .map(|s| (s.clone(), number(s).unwrap_or_else(|_| site_id(s))))
                 .collect();
-            for (_, id) in &ids {
-                debugger.time_site(Some(*id))?;
-            }
-            sleep(Duration::from_secs(seconds.into()));
-            let timings = debugger.timings();
-            let stopped = debugger.time_site(None);
-            let timings = timings?;
-            stopped?;
+            let timings = debugger.time_sites(
+                &ids.iter().map(|(_, id)| *id).collect::<Vec<_>>(),
+                Duration::from_secs(seconds.into()),
+            )?;
             let rows: Vec<_> = ids
                 .iter()
                 .map(|(name, id)| (name, timings.iter().find(|t| t.site == *id)))
