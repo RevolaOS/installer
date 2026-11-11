@@ -33,7 +33,7 @@ impl UploadOptions {
         if p.len() < 2
             || p.len() >= 192
             || !p.starts_with('/')
-            || p.to_ascii_lowercase().starts_with("/.reprise-")
+            || p.to_ascii_lowercase().starts_with("/.revola-")
             || !p
                 .bytes()
                 .all(|c| (32..=126).contains(&c) && !b"\\:*?\"<>|".contains(&c))
@@ -451,13 +451,13 @@ pub struct StorageReport {
     pub free_bytes: u64,
     pub sector_bytes: u32,
     pub companion_exists: bool,
-    pub osos_exists: bool,
+    pub firmware_exists: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RemovalReport {
     pub companion: bool,
-    pub osos: bool,
+    pub firmware: bool,
     pub extensions: bool,
     pub staged_uploads: bool,
 }
@@ -503,7 +503,7 @@ impl Session {
                 free_bytes: quad(data, 16),
                 sector_bytes: word(data, 24),
                 companion_exists: word(data, 28) & 1 != 0,
-                osos_exists: word(data, 28) & 2 != 0,
+                firmware_exists: word(data, 28) & 2 != 0,
             };
             if report.first_sector >= report.end_sector
                 || report.free_bytes < u64::from(required_bytes)
@@ -535,7 +535,7 @@ impl Session {
             }
             Ok(RemovalReport {
                 companion: removed & 1 != 0,
-                osos: removed & 2 != 0,
+                firmware: removed & 2 != 0,
                 extensions: removed & 4 != 0,
                 staged_uploads: removed & 8 != 0,
             })

@@ -153,7 +153,7 @@ impl Manifest {
         for (name, component) in &self.components {
             let (format, required): (&str, &[&str]) = match name.as_str() {
                 "usb_helper" => ("revola-upload-v1", &["image", "descriptor"]),
-                "osos" => ("revola-osos-recipe-v1", &["recipe", "data"]),
+                "firmware" => ("revola-firmware-recipe-v1", &["recipe", "data"]),
                 "companion" => ("revola-companion-recipe-v1", &["recipe", "data"]),
                 "nor" => ("revola-nor-template-v1", &["image", "descriptor"]),
                 _ => return Err(invalid("Unknown bundle component")),
@@ -174,7 +174,7 @@ impl Manifest {
         }
         if self.purpose == Purpose::Release
             && (self.core.is_none()
-                || ["usb_helper", "osos", "companion", "nor"]
+                || ["usb_helper", "firmware", "companion", "nor"]
                     .iter()
                     .any(|name| !self.components.contains_key(*name)))
         {

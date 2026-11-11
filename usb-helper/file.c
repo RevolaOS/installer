@@ -13,11 +13,12 @@
 #include "upload.h"
 #include "sha256.h"
 
-UPLOAD_CONFIG_QUALIFIER struct upload_config upload_config = {.tag = "REPRISE-UPLOAD2"};
+UPLOAD_CONFIG_QUALIFIER struct upload_config upload_config = {.tag = "REVOLA-UPLOAD2"};
 static int fd = -1;
 static bool mounted, writes_enabled, closed;
 static uint64_t data_start, data_end;
 static char temporary[64];
+static const char temporary_prefix[] = "/.revola-";
 static struct sha256 hash;
 
 /* Enabled only after the partition layout and mounted volume agree. */
@@ -89,7 +90,9 @@ static char tree[256];
 static bool staged_name(const char *name)
 {
     size_t n = strlen(name);
-    return n > 14 && !strncasecmp(name, ".reprise-", 9) && !strcasecmp(name + n - 5, ".part");
+    return n > sizeof(temporary_prefix) - 2 + 5 &&
+           !strncasecmp(name, temporary_prefix + 1, sizeof(temporary_prefix) - 2) &&
+           !strcasecmp(name + n - 5, ".part");
 }
 
 /* Append the first child of tree[length] to tree. Returns 1 for a directory, 0 for a
@@ -132,11 +135,14 @@ static int remove_tree(size_t length, unsigned depth)
     return rmdir(tree);
 }
 
-/* Reports what was deleted in existing_files: bit 0 companion, bit 1 OSOS,
+/* Reports what was deleted in existing_files: bit 0 companion, bit 1 firmware,
    bit 2 /Revola, bit 3 staged uploads. Missing entries are not an error. */
 static void remove_installation(void)
 {
-    static const char *const files[] = {"/cfw-loader.bin", "/osos-cfw.bin"};
+    static const char *const files[] = {
+        "/Revola/Firmware/loader.bin",
+        "/Revola/Firmware/revola.bin",
+    };
     writes_enabled = true;
     for (unsigned i = 0; i < 2; ++i)
         if (file_exists(files[i])) {
@@ -170,18 +176,20 @@ void upload_prepare(uint64_t start, uint64_t end, unsigned bytes)
     for (unsigned i = 0; i < sizeof(upload_config.path); ++i)
         path[i] = upload_config.path[i];
     UPLOAD_RESULT->size = upload_config.size;
-    if (!path_valid(path) || !strncasecmp(path, "/.reprise-", 10) ||
+    if (!path_valid(path) ||
+        !strncasecmp(path, temporary_prefix, sizeof(temporary_prefix) - 1) ||
         upload_config.size > UPLOAD_LIMIT || upload_config.overwrite > 3) {
         upload_fail(-302);
         return;
     }
     const char hex[] = "0123456789abcdef";
-    memcpy(temporary, "/.reprise-", 10);
+    const size_t prefix_bytes = sizeof(temporary_prefix) - 1;
+    memcpy(temporary, temporary_prefix, prefix_bytes);
     for (unsigned i = 0; i < 16; ++i) {
-        temporary[10 + 2 * i] = hex[UPLOAD_RESULT->nonce[i] >> 4];
-        temporary[11 + 2 * i] = hex[UPLOAD_RESULT->nonce[i] & 15];
+        temporary[prefix_bytes + 2 * i] = hex[UPLOAD_RESULT->nonce[i] >> 4];
+        temporary[prefix_bytes + 1 + 2 * i] = hex[UPLOAD_RESULT->nonce[i] & 15];
     }
-    memcpy(temporary + 42, ".part", 6);
+    memcpy(temporary + prefix_bytes + 32, ".part", 6);
     filesystem_init();
     int mounts = disk_mount_all();
     mounted = mounts > 0;
@@ -215,7 +223,8 @@ void upload_prepare(uint64_t start, uint64_t end, unsigned bytes)
         STORAGE_RESULT->existing_files = 0;
         if (upload_config.overwrite == 2)
             STORAGE_RESULT->existing_files =
-                file_exists("/cfw-loader.bin") | (file_exists("/osos-cfw.bin") << 1);
+                file_exists("/Revola/Firmware/loader.bin") |
+                (file_exists("/Revola/Firmware/revola.bin") << 1);
         else
             remove_installation();
         UPLOAD_RESULT->state = 4;

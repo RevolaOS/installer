@@ -38,9 +38,9 @@ test("starts once, forwards selected hashes, and waits for backend completion", 
     ["backup", "Verifying boot firmware backup"],
     ["decrypt", "Preparing Apple firmware"],
     ["decrypt", "Decrypting Apple firmware"],
-    ["uploadOsos", "Uploading RevolaOS"],
-    ["uploadOsos", "Verifying RevolaOS"],
-    ["uploadOsos", "Reconnecting to iPod"],
+    ["uploadFirmware", "Uploading RevolaOS"],
+    ["uploadFirmware", "Verifying RevolaOS"],
+    ["uploadFirmware", "Reconnecting to iPod"],
     ["bootloader", "Sending bootloader installer"],
   ]) {
     channel.onmessage({ stage, detail, completed: 100, total: 100, cancellable: true });

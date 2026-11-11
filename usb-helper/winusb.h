@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef REPRISE_WINUSB_H
-#define REPRISE_WINUSB_H
+#ifndef REVOLA_WINUSB_H
+#define REVOLA_WINUSB_H
 
 #include <stdint.h>
 

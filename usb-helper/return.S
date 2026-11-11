@@ -49,7 +49,7 @@ mapping_failed:
 cold_init:
     /* Filled from the verified device ROM before launch. */
     .word 0xeafffffe
-    .asciz "REPRISE-ROM"
+    .ascii "REVOLA-ROM\0\0"
     .space 1024 - 16
 
     /* The helper occupied IRAM1, including the ROM's stacks and USB state. */

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef REPRISE_LAYOUT_H
-#define REPRISE_LAYOUT_H
+#ifndef REVOLA_LAYOUT_H
+#define REVOLA_LAYOUT_H
 #include <stdint.h>
 #include <stdbool.h>
 

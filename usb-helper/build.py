@@ -19,8 +19,8 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 import firmware  # noqa: E402
 
 ROM_SHA = firmware.load()["compatibility"]["bootrom_sha256"]
-NONCE = b"REPRISE-NONCE-01"
-COLD_TAG = b"\xfe\xff\xff\xeaREPRISE-ROM\0"
+NONCE = b"REVOLA-NONCE-01\0"
+COLD_TAG = b"\xfe\xff\xff\xeaREVOLA-ROM\0\0"
 
 
 def sha(data):
@@ -224,7 +224,7 @@ def prepare_source(out, rockbox):
     shutil.copyfile(out / "upload.h", source / "firmware/usbstack/upload.h")
     for name in ("winusb.h", "usb_identity.h", "memory.h", "layout.h"):
         shutil.copyfile(out / name, source / "firmware/usbstack" / name)
-    # The copy may be inside osos-lab; do not discover its parent Git checkout.
+    # Do not discover a parent Git checkout outside the copied build sources.
     env = dict(os.environ, GIT_CEILING_DIRECTORIES=str(out))
     for flags in (["--check"], []):
         subprocess.run(
@@ -270,7 +270,7 @@ def write_image(out, symbols, blob, cold_offset):
     if not 0x08000000 <= symbols["_end"] <= 0x09800000:
         raise ValueError("helper BSS overlaps the USB buffer")
     data = wrap((out / "bootloader.bin").read_bytes())
-    tag = b"REPRISE-UPLOAD2\0"
+    tag = b"REVOLA-UPLOAD2\0\0"
     if data.count(tag) != 1:
         raise ValueError("expected one upload config")
     offset = data.index(tag)

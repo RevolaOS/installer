@@ -94,7 +94,7 @@ fn run(
         job.emit(
             format!(
                 "Removed: companion loader {}; RevolaOS {}; extensions {}; unfinished uploads {}",
-                removed.companion, removed.osos, removed.extensions, removed.staged_uploads
+                removed.companion, removed.firmware, removed.extensions, removed.staged_uploads
             ),
             None,
         );

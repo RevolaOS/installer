@@ -109,14 +109,14 @@ fn assemble_component(
 
 /// Bytes written to the data partition: both images plus every extension file.
 pub fn disk_bytes(bundle: &VerifiedBundle) -> Result<u32> {
-    let osos = Recipe::parse(bundle.file("osos", "recipe")?)?;
+    let firmware = Recipe::parse(bundle.file("firmware", "recipe")?)?;
     let companion = Recipe::parse(bundle.file("companion", "recipe")?)?;
-    u32::try_from(osos.output.bytes + companion.output.bytes + bundle.extension_bytes())
+    u32::try_from(firmware.output.bytes + companion.output.bytes + bundle.extension_bytes())
         .map_err(|_| invalid("Package disk size overflow"))
 }
 
-pub fn assemble_osos(bundle: &VerifiedBundle, inputs: &AppleInputs) -> Result<Vec<u8>> {
-    let image = assemble_component(bundle, "osos", inputs)?;
+pub fn assemble_firmware(bundle: &VerifiedBundle, inputs: &AppleInputs) -> Result<Vec<u8>> {
+    let image = assemble_component(bundle, "firmware", inputs)?;
     if image.len() <= 0x800 || image.get(..7) != Some(b"87021.0") {
         return Err(invalid("Unsupported assembled OSOS layout"));
     }
@@ -323,7 +323,7 @@ pub fn bootloader_fingerprint(bundle: &VerifiedBundle) -> Result<BootloaderFinge
 }
 
 pub struct Artifacts {
-    pub osos: Vec<u8>,
+    pub firmware: Vec<u8>,
     pub companion: Vec<u8>,
     pub nor_installer: Vec<u8>,
     /// In upload order.
@@ -353,8 +353,8 @@ pub struct FileReport {
 impl Artifacts {
     fn files(&self) -> Vec<(&str, &[u8])> {
         let mut files = vec![
-            ("osos-cfw.bin", self.osos.as_slice()),
-            ("cfw-loader.bin", &self.companion),
+            ("Revola/Firmware/revola.bin", self.firmware.as_slice()),
+            ("Revola/Firmware/loader.bin", &self.companion),
             ("install-rockbox-cfw.dfu", &self.nor_installer),
         ];
         files.extend(
@@ -422,7 +422,7 @@ pub fn assemble_with_hardware_policy(
     }
     let syscfg = SysCfg::parse(nor_backup).map_err(|e| invalid(e.to_string()))?;
     Ok(Artifacts {
-        osos: assemble_osos(bundle, inputs)?,
+        firmware: assemble_firmware(bundle, inputs)?,
         companion: assemble_companion_with_policy(bundle, inputs, &syscfg, policy)?,
         nor_installer: nor_installer(bundle)?,
         extensions: bundle

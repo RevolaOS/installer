@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 
-#ifndef REPRISE_UPLOAD_H
-#define REPRISE_UPLOAD_H
+#ifndef REVOLA_UPLOAD_H
+#define REVOLA_UPLOAD_H
 
 #include <stdint.h>
 #include "memory.h"

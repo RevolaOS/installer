@@ -28,7 +28,7 @@ pub struct PackageInfo {
 }
 
 fn package_info(bundle: &VerifiedBundle, filename: Option<String>) -> Result<PackageInfo, String> {
-    for component in ["usb_helper", "osos", "companion", "nor"] {
+    for component in ["usb_helper", "firmware", "companion", "nor"] {
         if !bundle.manifest().components.contains_key(component) {
             return Err(format!("Package is missing the {component} component."));
         }

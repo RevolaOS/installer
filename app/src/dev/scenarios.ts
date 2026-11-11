@@ -283,7 +283,7 @@ export const scenarios: Scenario[] = [
     label: "USB transfer failed",
     screen: "installation",
     installFailure: {
-      stage: "uploadOsos",
+      stage: "uploadFirmware",
       detail:
         "USB transfer failed: device disconnected. Reconnect your iPod in DFU mode before trying again.",
     },

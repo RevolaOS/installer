@@ -5,7 +5,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub(super) const COLD_INIT_SIZE: usize = 1024;
-pub(super) const COLD_INIT_TAG: &[u8] = b"\xfe\xff\xff\xeaREPRISE-ROM\0";
+pub(super) const COLD_INIT_TAG: &[u8] = b"\xfe\xff\xff\xeaREVOLA-ROM\0\0";
 pub(super) const ROM_START: usize = 0xc0;
 pub(super) const ROM_END: usize = 0x284;
 
@@ -87,8 +87,8 @@ impl UploadHelper {
         {
             return Err(invalid("Helper image/manifest mismatch"));
         }
-        slot(image, m.nonce_offset, b"REPRISE-NONCE-01", 16)?;
-        slot(image, m.config_offset, b"REPRISE-UPLOAD2\0", 248)?;
+        slot(image, m.nonce_offset, b"REVOLA-NONCE-01\0", 16)?;
+        slot(image, m.config_offset, b"REVOLA-UPLOAD2\0\0", 248)?;
         slot(image, m.cold_init_offset, COLD_INIT_TAG, COLD_INIT_SIZE)?;
         let mut slots = [
             (m.nonce_offset, 16),
@@ -167,7 +167,7 @@ impl UploadHelper {
             Config {
                 size,
                 sha: &[0; 32],
-                destination: "/cfw-loader.bin",
+                destination: "/Revola/Firmware/loader.bin",
                 mode,
             },
         )

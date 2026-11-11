@@ -106,10 +106,10 @@ static void close_repeatedly(void);
 static void touch(const char *p) {int f=open(p,O_WRONLY|O_CREAT,0600);assert(f>=0);close(f);}
 static bool present(const char *p) {return access(p,F_OK)==0;}
 static void removal(void) {
-    assert(test_result.state==4);assert(!test_result.rc);assert(test_storage.existing_files==15);
-    assert(!present("cfw-loader.bin")&&!present("osos-cfw.bin")&&!present("Revola"));
-    assert(!present(".reprise-00112233445566778899aabbccddeeff.part"));
-    assert(present("iPod_Control/Music/song.m4a")&&present("reprise-notes.part"));
+    assert(test_result.state==4);assert(!test_result.rc);assert(test_storage.existing_files==(fault==14 ? 5 : fault==15 ? 0 : 15));
+    assert(!present("Revola/Firmware/loader.bin")&&!present("Revola/Firmware/revola.bin")&&!present("Revola"));
+    assert(!present(".revola-00112233445566778899aabbccddeeff.part"));
+    assert(present("iPod_Control/Music/song.m4a")&&present("unrelated-notes.part"));
     close_repeatedly();
 }
 off_t filesize(int fd) {struct stat s;assert(!fstat(fd,&s));return s.st_size;}
@@ -128,11 +128,16 @@ int main(int argc,char **argv)
     const char *target=argc==6 ? argv[5] : "/os.bin";
     unsigned size=strtoul(argv[1],0,10); unsigned overwrite=atoi(argv[2]); bool exists=atoi(argv[3]);fault=atoi(argv[4]);
     if(exists){int f=open("os.bin",O_WRONLY|O_CREAT,0600);assert(write(f,"old",3)==3);close(f);}
-    if(overwrite==3){
-        touch("cfw-loader.bin");touch("osos-cfw.bin");touch(".reprise-00112233445566778899aabbccddeeff.part");touch("reprise-notes.part");
-        assert(!mkdir("Revola",0700)&&!mkdir("Revola/Extensions",0700)&&!mkdir("Revola/Extensions/eq",0700)&&!mkdir("Revola/Extensions/eq/data",0700));
+    if(overwrite==3 && fault!=14 && fault!=15){
+        assert(!mkdir("Revola",0700)&&!mkdir("Revola/Firmware",0700));
+        touch("Revola/Firmware/loader.bin");touch("Revola/Firmware/revola.bin");touch(".revola-00112233445566778899aabbccddeeff.part");touch("unrelated-notes.part");
+        assert(!mkdir("Revola/Extensions",0700)&&!mkdir("Revola/Extensions/eq",0700)&&!mkdir("Revola/Extensions/eq/data",0700));
         touch("Revola/Extensions/eq/manifest.bin");touch("Revola/Extensions/eq/main.rvx");touch("Revola/Extensions/eq/data/state.bin");
         assert(!mkdir("iPod_Control",0700)&&!mkdir("iPod_Control/Music",0700));touch("iPod_Control/Music/song.m4a");
+    }
+    if(overwrite==3 && (fault==14 || fault==15)) {
+        if(fault==14){assert(!mkdir("Revola",0700)&&!mkdir("Revola/Firmware",0700));touch("Revola/Firmware/loader.bin");}
+        assert(!mkdir("iPod_Control",0700)&&!mkdir("iPod_Control/Music",0700));touch("iPod_Control/Music/song.m4a");touch("unrelated-notes.part");
     }
     upload_config.size=size;upload_config.overwrite=overwrite;strcpy(upload_config.path,target);
     struct sha256 hash;sha256_init(&hash);
@@ -142,9 +147,9 @@ int main(int argc,char **argv)
     memset(test_result.nonce,7,16);
     upload_prepare(394224,1001390072,4096);
     if(fault>=9 && fault<=11){assert(test_result.rc==-303);assert(opens==0);assert(!upload_write_allowed(394224,1));upload_close();return 0;}
-    if(overwrite==3 && (fault==0 || fault==8)){removal();return 0;}
+    if(overwrite==3 && (fault==0 || fault==8 || fault==14 || fault==15)){removal();return 0;}
     if(fault==8){assert(test_result.rc==-322);assert(opens==0);upload_close();return 0;}
-    if(overwrite==2){assert(test_result.state==4);assert(!test_result.rc);assert(opens==0);assert(test_storage.start==394224);assert(test_storage.end==1001390072);assert(test_storage.free_bytes==1024000000);assert(!upload_write_allowed(394224,1));close_repeatedly();assert(sleeps==1);return 0;}
+    if(overwrite==2){assert(test_result.state==4);assert(!test_result.rc);assert(opens==0);assert(test_storage.existing_files==(fault==16 ? 3 : 0));assert(test_storage.start==394224);assert(test_storage.end==1001390072);assert(test_storage.free_bytes==1024000000);assert(!upload_write_allowed(394224,1));close_repeatedly();assert(sleeps==1);return 0;}
     if(exists&&!overwrite){assert(test_result.rc==-304);assert(opens==0);original();upload_close();return 0;}
     assert(test_result.state==1);test_result.state=2;upload_start();
     if(fault==12){
@@ -288,8 +293,10 @@ extern struct storage_result test_storage;
                 self.sha.sha256_final(ctypes.byref(s), out)
                 self.assertEqual(out.raw, hashlib.sha256(data).digest(), (size, chunk))
 
-    def run_file(self, size, overwrite, exists, fault, path="/os.bin"):
+    def run_file(self, size, overwrite, exists, fault, path="/os.bin", setup=None):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            if setup:
+                setup(Path(directory))
             subprocess.run(
                 [
                     str(self.root / "file-test"),
@@ -303,14 +310,54 @@ extern struct storage_result test_storage;
                 check=True,
             )
 
-    def test_theme_upload_creates_parent_directories(self):
-        self.run_file(65537, True, False, 0, "/themes/dark/theme.bin")
+    def test_firmware_upload_creates_directories_and_replaces_files(self):
+        for name in ("revola.bin", "loader.bin"):
+            path = f"/Revola/Firmware/{name}"
+
+            def existing_directory(root):
+                (root / "Revola").mkdir()
+
+            def existing_file(root):
+                destination = root / path.lstrip("/")
+                destination.parent.mkdir(parents=True)
+                destination.write_bytes(b"old")
+
+            for setup in (None, existing_directory, existing_file):
+                with self.subTest(name=name, setup=setup):
+                    self.run_file(65537, True, False, 0, path, setup)
+
+    def test_blocked_firmware_directory_fails_cleanly(self):
+        for blocked in ("Revola", "Revola/Firmware"):
+
+            def setup(root):
+                path = root / blocked
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"unrelated")
+
+            with self.subTest(blocked=blocked):
+                self.run_file(
+                    65537,
+                    True,
+                    False,
+                    13,
+                    "/Revola/Firmware/revola.bin",
+                    setup,
+                )
 
     def test_storage_inspection_is_read_only(self):
         self.run_file(12000000, 2, True, 0)
 
+    def test_storage_inspection_finds_nested_firmware_files(self):
+        def setup(root):
+            folder = root / "Revola/Firmware"
+            folder.mkdir(parents=True)
+            for name in ("revola.bin", "loader.bin"):
+                (folder / name).write_bytes(b"installed")
+
+        self.run_file(12000000, 2, False, 16, setup=setup)
+
     def test_removal_deletes_only_revola_files(self):
-        for fault in [0, 8]:
+        for fault in [0, 8, 14, 15]:
             with self.subTest(fault=fault):
                 self.run_file(0, 3, False, fault)
 

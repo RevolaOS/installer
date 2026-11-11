@@ -19,12 +19,14 @@ fn archive_contains_only_reports_and_sector_dumps_with_text_redacted() {
     for name in [
         "nor.bin",
         "syscfg.bin",
-        "osos-cfw.bin",
+        "Revola/Firmware/revola.bin",
         "firmware.ipsw",
         "secret.json",
         "storage-secret.bin",
     ] {
-        fs::write(source.path().join(name), b"private").unwrap();
+        let path = source.path().join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"private").unwrap();
     }
     fs::create_dir(source.path().join("firmware")).unwrap();
     fs::write(source.path().join("firmware/companion.bin"), b"private").unwrap();

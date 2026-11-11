@@ -92,10 +92,10 @@ fn release_package_replays_with_each_devices_identity() {
         .unwrap();
         let artifacts = assembly::assemble(&bundle, &apple, &nor).unwrap();
         assert_eq!(
-            artifacts.osos,
+            artifacts.firmware,
             assembly::assemble_local(
-                &fs::read(built.join("osos.json")).unwrap(),
-                &fs::read(built.join("osos.data")).unwrap(),
+                &fs::read(built.join("firmware.json")).unwrap(),
+                &fs::read(built.join("firmware.data")).unwrap(),
                 &inputs
             )
             .unwrap()

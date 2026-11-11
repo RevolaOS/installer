@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef REPRISE_USB_IDENTITY_H
-#define REPRISE_USB_IDENTITY_H
+#ifndef REVOLA_USB_IDENTITY_H
+#define REVOLA_USB_IDENTITY_H
 
 /* Informal FOSS USB identity for the upload helper. */
 #define UPLOAD_USB_VENDOR_ID 0xF055

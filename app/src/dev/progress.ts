@@ -11,7 +11,7 @@ const stages = [
   ["decrypt", "Preparing Apple firmware"],
   ["assemble", "Preparing RevolaOS"],
   ["uploadLoader", "Uploading companion loader"],
-  ["uploadOsos", "Uploading RevolaOS"],
+  ["uploadFirmware", "Uploading RevolaOS"],
   ["verify", "Verifying RevolaOS"],
   ["bootloader", "Sending bootloader installer"],
 ] as const;
@@ -25,7 +25,7 @@ export async function simulateInstallation(
   for (const [stage, detail] of stages) {
     for (const completed of [0, 25, 50, 75, 100]) {
       channel.onmessage({
-        stage: stage === "verify" ? "uploadOsos" : stage,
+        stage: stage === "verify" ? "uploadFirmware" : stage,
         detail,
         completed,
         total: 100,

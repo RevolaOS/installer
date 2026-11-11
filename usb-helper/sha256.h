@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 
-#ifndef REPRISE_SHA256_H
-#define REPRISE_SHA256_H
+#ifndef REVOLA_SHA256_H
+#define REVOLA_SHA256_H
 
 #include <stdint.h>
 #include <stddef.h>

@@ -172,13 +172,13 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
     let root = backup_directory(&std::env::temp_dir(), b"revola-firmware-test").unwrap();
     let state = InstallState::default();
     let mut artifacts = Artifacts {
-        osos: b"first".to_vec(),
+        firmware: b"first".to_vec(),
         companion: b"companion".to_vec(),
         nor_installer: b"installer".to_vec(),
         extensions: Vec::new(),
     };
     let mut reports = Vec::new();
-    for (device, osos) in [
+    for (device, firmware) in [
         (b"a", b"first".as_slice()),
         (b"b", b"other"),
         (b"a", b"latest"),
@@ -189,22 +189,22 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
             backup_directory(&root, device).unwrap(),
         )
         .unwrap();
-        artifacts.osos = osos.to_vec();
+        artifacts.firmware = firmware.to_vec();
         job.save_firmware(&artifacts).unwrap();
         assert!(!job.directory.join("firmware").exists());
         reports.push(job.directory.join("assembly.json"));
     }
     assert_eq!(
-        fs::read(root.join("backups/61/firmware/osos-cfw.bin")).unwrap(),
+        fs::read(root.join("backups/61/firmware/Revola/Firmware/revola.bin")).unwrap(),
         b"latest"
     );
     assert_eq!(
-        fs::read(root.join("backups/62/firmware/osos-cfw.bin")).unwrap(),
+        fs::read(root.join("backups/62/firmware/Revola/Firmware/revola.bin")).unwrap(),
         b"other"
     );
     for report in reports {
         let json: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
-        assert!(json["files"]["osos-cfw.bin"]["sha256"].is_string());
+        assert!(json["files"]["Revola/Firmware/revola.bin"]["sha256"].is_string());
     }
     fs::remove_dir_all(root).unwrap();
 }

@@ -45,7 +45,7 @@ const labels: Record<string, string> = {
   decrypt: "Preparing Apple firmware",
   assemble: "Preparing RevolaOS",
   uploadLoader: "Uploading companion loader",
-  uploadOsos: "Uploading RevolaOS",
+  uploadFirmware: "Uploading RevolaOS",
   uploadExtensions: "Uploading extensions",
   removeFiles: "Removing RevolaOS files",
   bootloader: "Preparing bootloader",

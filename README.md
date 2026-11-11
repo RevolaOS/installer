@@ -25,11 +25,11 @@ target/release/revola devices
 target/release/revola check
 target/release/revola nor-dump --output nor.bin
 target/release/revola firmware inspect --ipsw iPod_38.2.0.5.ipsw
-target/release/revola bundle apply-recipe --recipe osos.json --data osos.data --inputs DECRYPTED_DIR --out osos-cfw.bin
+target/release/revola bundle apply-recipe --recipe firmware.json --data firmware.data --inputs DECRYPTED_DIR --out revola.bin
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
-Installation and BootROM inspection commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files. Bundle components keep the schema 2 format names from RepriseOS so existing recipes assemble unchanged.
+Installation and BootROM inspection commands use BootROM DFU; select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output. `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the `revola` repository produces the recipe and data files.
 
 ### USB debugging
 
@@ -57,11 +57,11 @@ A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signatur
 | `purpose`, `version`, `minimum_installer_version` | as named; older installers refuse newer bundles |
 | `compatibility` | target, hardware versions, BootROM hash |
 | `core` | `api` (the `rv_api` major) and `firmware_build_id` of the pinned OSOS |
-| `components` | `usb_helper`, `osos`, `companion`, `nor`, each with a `format` and named files |
+| `components` | `usb_helper`, `firmware`, `companion`, `nor`, each with a `format` and named files |
 | `extensions` | id to `{format, version, api, file}`; `file` is the SHA-256 of the extension's one `.rvx` |
 | `assets` | hash to size |
 
-Extension ids are lower-case ASCII, at most 32 characters; FAT32 is case-insensitive and may return a short name in upper case, so nothing may depend on the case of a file name. `core.firmware_build_id` is the first eight hex digits of the pinned decrypted OSOS SHA-256 (`0x660eb6ff` for 2.0.5) and must match `firmware/apple.json`. Each `.rvx` (revola `core/loader/rvx.h`, format 1) is checked as the core's loader checks it: the header carries `core.api` as its API major and the firmware build id; the manifest (version 2) carries the package id and the same API major, with `main` first; the catalog fits the file, lists the manifest's modules first and then the assets, with word-aligned payloads inside the file and module sizes that add up. The installer uploads each file to `/Revola/Extensions/<id>.rvx` after `osos-cfw.bin`; the helper creates missing directories.
+Extension ids are lower-case ASCII, at most 32 characters; FAT32 is case-insensitive and may return a short name in upper case, so nothing may depend on the case of a file name. `core.firmware_build_id` is the first eight hex digits of the pinned decrypted OSOS SHA-256 (`0x660eb6ff` for 2.0.5) and must match `firmware/apple.json`. Each `.rvx` (revola `core/loader/rvx.h`, format 1) is checked as the core's loader checks it: the header carries `core.api` as its API major and the firmware build id; the manifest (version 2) carries the package id and the same API major, with `main` first; the catalog fits the file, lists the manifest's modules first and then the assets, with word-aligned payloads inside the file and module sizes that add up. The installer uploads each file to `/Revola/Extensions/<id>.rvx` after `Revola/Firmware/revola.bin`; the helper creates missing directories.
 
 `revola bundle export --spec FILE --base DIR --out DIR` builds a bundle from a specification with the same fields minus `schema` and `assets`, with file paths instead of hashes; `sign`, `pack`, `inspect`, `fetch` and `assemble` operate on the result.
 
@@ -71,7 +71,7 @@ DFU code is adapted from wInd3x; the PIPE0 protocol follows Rockbox's `ipoddfu.c
 
 ## USB upload helper
 
-The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d`, writes one file to the data partition and reads it back, or deletes `/osos-cfw.bin`, `/cfw-loader.bin`, `/Revola/` and unfinished uploads, then returns to DFU. Building it needs GNU make, `arm-elf-eabi-gcc` 9.5.0 (the version is pinned in `firmware/apple.json`) and the Rockbox checkout pinned in `dependencies.lock`:
+The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d`, writes one file to the data partition and reads it back, or deletes `/Revola/Firmware/revola.bin`, `/Revola/Firmware/loader.bin`, `/Revola/` and unfinished uploads, then returns to DFU. Building it needs GNU make, `arm-elf-eabi-gcc` 9.5.0 (the version is pinned in `firmware/apple.json`) and the Rockbox checkout pinned in `dependencies.lock`:
 
 ```sh
 python3 tools/setup.py            # clones Rockbox into vendor/ and applies rockbox/*.patch
@@ -94,7 +94,7 @@ pnpm check            # typecheck, biome lint and frontend tests
 pnpm tauri build      # bundles under ../target/release/bundle
 ```
 
-Install flow: disclaimer, IPSW selection, USB permissions on Linux, DFU detection, device checks, NOR backup, firmware assembly, upload and bootloader install.
+Install flow: disclaimer, IPSW selection, USB permissions on Linux, DFU detection, device checks, NOR backup, firmware assembly, upload and bootloader install. The installer keeps the installed bootloader only when its code hash, size and entry point exactly match the package. A different custom bootloader is replaced after a fresh NOR backup.
 
 Uninstall flow: package download (no IPSW), DFU detection, device checks, NOR backup, file removal, then the Rockbox dual-boot uninstaller, which moves Apple's bootloader back into place. Files go first because the RevolaOS bootloader stops when they are missing. The uninstaller is the optional `uninstaller` file of the bundle's `nor` component, built by `mks5lboot --mkdfu-uninst ipod6g`.
 

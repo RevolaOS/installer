@@ -16,7 +16,7 @@ const REPORTS: &[&str] = &[
     "nor.json",
     "assembly.json",
     "uploadLoader.json",
-    "uploadOsos.json",
+    "uploadFirmware.json",
     "uploadDefaultTheme.json",
     "uploadDarkTheme.json",
     "result.json",

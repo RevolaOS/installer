@@ -24,7 +24,7 @@
 extern void bss_init(void);
 
 /* Patched with a new nonce by the host before each upload. */
-static const volatile uint8_t nonce[16] = "REPRISE-NONCE-01";
+static const volatile uint8_t nonce[16] = "REVOLA-NONCE-01\0";
 
 static struct disk_layout layout;
 struct storage_diagnostics upload_diagnostics;

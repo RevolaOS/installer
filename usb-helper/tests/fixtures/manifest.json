@@ -1,11 +1,17 @@
 {
   "schema": 3,
   "storage_inspection": true,
+  "file_removal": true,
+  "usb": {
+    "vendor_id": 61525,
+    "product_id": 6157,
+    "winusb": true
+  },
   "mode": "stream-file",
   "rom_sha256": "69c087afc5753d7f0f11f09b141b372af753a854bc526673ea444c486d6003e4",
-  "bytes": 89440,
-  "sha256": "07af9b210c620c482e80fbeadf8cd02db15ec998beff8cd98fe8acf11228af13",
-  "nonce_offset": 88736,
-  "config_offset": 88756,
-  "cold_init_offset": 76804
+  "bytes": 99104,
+  "sha256": "11ad2e9987f9ba7a0d262e6281e19c039828189cbeba079e7b31f096db2b34e4",
+  "nonce_offset": 98400,
+  "config_offset": 98420,
+  "cold_init_offset": 86204
 }

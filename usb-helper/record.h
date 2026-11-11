@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 
-#ifndef REPRISE_RECORD_H
-#define REPRISE_RECORD_H
+#ifndef REVOLA_RECORD_H
+#define REVOLA_RECORD_H
 
 #include <stdint.h>
 

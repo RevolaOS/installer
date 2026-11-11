@@ -14,17 +14,18 @@ fn fixture_helper() -> Result<UploadHelper> {
 
 #[test]
 fn helper_identity_preserves_legacy_and_rejects_apple_winusb_alias() {
-    let legacy = fixture_helper().unwrap();
-    assert_eq!(
-        (legacy.usb.vendor_id, legacy.usb.product_id),
-        (0x05ac, 0x1261)
-    );
-    assert_eq!(legacy.validate_platform().is_err(), cfg!(windows));
     let image = include_bytes!("../../../../usb-helper/tests/fixtures/upload.dfu");
     let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../../usb-helper/tests/fixtures/manifest.json"
     ))
     .unwrap();
+    manifest.as_object_mut().unwrap().remove("usb");
+    let legacy = UploadHelper::from_bytes(image, &serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(
+        (legacy.usb.vendor_id, legacy.usb.product_id),
+        (0x05ac, 0x1261)
+    );
+    assert_eq!(legacy.validate_platform().is_err(), cfg!(windows));
     manifest["usb"] =
         serde_json::json!({"vendor_id": 0xf055, "product_id": 0x180d, "winusb": true});
     let helper = UploadHelper::from_bytes(image, &serde_json::to_vec(&manifest).unwrap()).unwrap();
@@ -43,7 +44,7 @@ fn put(b: &mut [u8], offset: usize, value: u32) {
 
 fn options() -> UploadOptions {
     UploadOptions {
-        destination: "/osos-cfw.bin".into(),
+        destination: "/Revola/Firmware/revola.bin".into(),
         overwrite: true,
     }
 }
@@ -68,7 +69,8 @@ fn status(size: u32, state: u32, sha: &[u8; 32]) -> Status {
     }
     raw[64..96].copy_from_slice(sha);
     raw[96..128].copy_from_slice(sha);
-    raw[128..141].copy_from_slice(b"/osos-cfw.bin");
+    raw[128..128 + b"/Revola/Firmware/revola.bin".len()]
+        .copy_from_slice(b"/Revola/Firmware/revola.bin");
     Status { raw }
 }
 struct Fake {
@@ -438,8 +440,8 @@ fn helper_validation_rejects_old_images_and_invalid_slots() {
     let mut image = vec![0; 0xe00];
     image[..8].copy_from_slice(b"87021.0\x02");
     put(&mut image, 12, 0x600);
-    image[0x800..0x810].copy_from_slice(b"REPRISE-NONCE-01");
-    image[0x810..0x820].copy_from_slice(b"REPRISE-UPLOAD2\0");
+    image[0x800..0x810].copy_from_slice(b"REVOLA-NONCE-01\0");
+    image[0x810..0x820].copy_from_slice(b"REVOLA-UPLOAD2\0\0");
     image[0xa00..0xa10].copy_from_slice(COLD_INIT_TAG);
     let m = serde_json::json!({"schema":3,"mode":"stream-file","rom_sha256":firmware::current().compatibility.bootrom_sha256,
         "bytes":image.len(),"sha256":format!("{:x}",Sha256::digest(&image)),
@@ -475,8 +477,8 @@ fn removal_needs_the_helper_manifest_flag() {
     let mut image = vec![0; 0xe00];
     image[..8].copy_from_slice(b"87021.0\x02");
     put(&mut image, 12, 0x600);
-    image[0x800..0x810].copy_from_slice(b"REPRISE-NONCE-01");
-    image[0x810..0x820].copy_from_slice(b"REPRISE-UPLOAD2\0");
+    image[0x800..0x810].copy_from_slice(b"REVOLA-NONCE-01\0");
+    image[0x810..0x820].copy_from_slice(b"REVOLA-UPLOAD2\0\0");
     image[0xa00..0xa10].copy_from_slice(COLD_INIT_TAG);
     let mut m = serde_json::json!({"schema":3,"mode":"stream-file","rom_sha256":firmware::current().compatibility.bootrom_sha256,
         "bytes":image.len(),"sha256":format!("{:x}",Sha256::digest(&image)),
@@ -533,7 +535,7 @@ fn paths_reject_traversal_aliases_and_reserved_temporary_names() {
         "/os ",
         "/a\\b",
         "/a:b",
-        "/.reprise-test.part",
+        "/.revola-test.part",
         "/é.bin",
     ] {
         assert!(
@@ -546,7 +548,7 @@ fn paths_reject_traversal_aliases_and_reserved_temporary_names() {
             "{path}"
         );
     }
-    for path in ["/osos-cfw.bin", "/folder/os patched.bin"] {
+    for path in ["/Revola/Firmware/revola.bin", "/folder/os patched.bin"] {
         assert!(UploadOptions {
             destination: path.into(),
             overwrite: true
@@ -574,8 +576,9 @@ fn saved_rom_prepares_fixture_helper() {
         &[9; 32]
     );
     assert_eq!(
-        &patched[helper.config_offset + 56..helper.config_offset + 69],
-        b"/osos-cfw.bin"
+        &patched
+            [helper.config_offset + 56..helper.config_offset + 56 + options().destination.len()],
+        b"/Revola/Firmware/revola.bin"
     );
     assert_eq!(
         &patched[helper.nonce_offset..helper.nonce_offset + 16],

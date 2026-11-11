@@ -27,8 +27,8 @@ pub(super) fn inspect_storage(
     job.save_json("storage.json", &storage)?;
     job.emit(
         format!(
-            "{} bytes free; companion present: {}; OSOS present: {}",
-            storage.free_bytes, storage.companion_exists, storage.osos_exists
+            "{} bytes free; companion present: {}; firmware present: {}",
+            storage.free_bytes, storage.companion_exists, storage.firmware_exists
         ),
         None,
     );
@@ -47,14 +47,14 @@ pub(super) fn install(
         (
             "uploadLoader".to_owned(),
             "companion loader".to_owned(),
-            "/cfw-loader.bin".to_owned(),
+            "/Revola/Firmware/loader.bin".to_owned(),
             artifacts.companion.as_slice(),
         ),
         (
-            "uploadOsos".into(),
+            "uploadFirmware".into(),
             "RevolaOS".into(),
-            "/osos-cfw.bin".into(),
-            &artifacts.osos,
+            "/Revola/Firmware/revola.bin".into(),
+            &artifacts.firmware,
         ),
     ];
     // Extension files follow the core so a failed upload never leaves a core

@@ -191,7 +191,7 @@ fn output_is_created_exclusively_with_a_report() {
     let directory = tempfile::tempdir().unwrap();
     let out = directory.path().join("assembled");
     let artifacts = Artifacts {
-        osos: vec![1, 2],
+        firmware: vec![1, 2],
         companion: vec![3],
         nor_installer: vec![4],
         extensions: vec![ExtensionArtifact {
@@ -201,11 +201,20 @@ fn output_is_created_exclusively_with_a_report() {
         }],
     };
     let report = artifacts.write(&out).unwrap();
-    assert_eq!(fs::read(out.join("osos-cfw.bin")).unwrap(), [1, 2]);
+    assert_eq!(
+        fs::read(out.join("Revola/Firmware/revola.bin")).unwrap(),
+        [1, 2]
+    );
     assert_eq!(fs::read(out.join("Revola/Extensions/eq.rvx")).unwrap(), [5]);
-    assert_eq!(report.files["cfw-loader.bin"].sha256, sha256(&[3]));
+    assert_eq!(
+        report.files["Revola/Firmware/loader.bin"].sha256,
+        sha256(&[3])
+    );
     assert!(artifacts.write(&out).is_err());
-    assert_eq!(fs::read(out.join("osos-cfw.bin")).unwrap(), [1, 2]);
+    assert_eq!(
+        fs::read(out.join("Revola/Firmware/revola.bin")).unwrap(),
+        [1, 2]
+    );
 }
 
 #[test]
@@ -321,7 +330,7 @@ fn local_distribution_replays_from_saved_inputs() {
 
     assert_eq!(
         disk_bytes(&bundle).unwrap() as usize,
-        artifacts.osos.len() + artifacts.companion.len()
+        artifacts.firmware.len() + artifacts.companion.len()
     );
     for (name, bytes) in artifacts.files() {
         let local = fs::read(build.join(name)).unwrap();
@@ -532,4 +541,40 @@ fn experimental_companion_preserves_identity_and_layout_checks() {
             personalize_companion_with_policy(vec![0; 0x2b800], &config, AllowUnknown).is_err()
         );
     }
+}
+
+#[test]
+#[ignore = "requires REVOLA_TEST_PACKAGE and REVOLA_TEST_PREVIOUS_BOOTLOADER saved DFU installer"]
+fn previous_custom_loader_requires_flash_of_current_bundle() {
+    let package = std::env::var_os("REVOLA_TEST_PACKAGE").unwrap();
+    let previous = std::env::var_os("REVOLA_TEST_PREVIOUS_BOOTLOADER").unwrap();
+    let bundle = VerifiedBundle::load_local_zip(std::path::Path::new(&package), "0.2.0").unwrap();
+    let expected = bootloader_fingerprint(&bundle).unwrap();
+    let image = fs::read(previous).unwrap();
+    let header_offset = image
+        .windows(8)
+        .position(|bytes| bytes == b"87021.0\x02")
+        .unwrap();
+    let header = &image[header_offset..header_offset + 0x800];
+    let code = &image[header_offset + 0x800..];
+    assert_eq!(code.len(), word(header, 12) as usize);
+    let installed = BootloaderReport {
+        fingerprint: BootloaderFingerprint::from_code(code, word(header, 8)),
+        apple: false,
+        read_bytes: header.len() + code.len(),
+    };
+    installed.fingerprint.validate().unwrap();
+    assert_eq!(
+        BootloaderAction::for_installed(&installed, &expected),
+        BootloaderAction::Upgrade
+    );
+    let current = BootloaderReport {
+        fingerprint: expected.clone(),
+        apple: false,
+        read_bytes: 0x800 + expected.bytes,
+    };
+    assert_eq!(
+        BootloaderAction::for_installed(&current, &expected),
+        BootloaderAction::Keep
+    );
 }

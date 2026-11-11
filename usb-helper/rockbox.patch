@@ -30,7 +30,7 @@
 
  static const struct usb_string_descriptor usb_string_iProduct =
 -USB_STRING_INITIALIZER(u"Rockbox media player");
-+USB_STRING_INITIALIZER(u"Reprise file upload");
++USB_STRING_INITIALIZER(u"Revola file upload");
 
  static struct usb_string_descriptor usb_string_iSerial =
  USB_STRING_INITIALIZER(u"00000000000000000000000000000000000000000");
