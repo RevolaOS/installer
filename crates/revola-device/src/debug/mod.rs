@@ -13,8 +13,8 @@ mod tests;
 
 pub use display::{png, HEIGHT, WIDTH};
 pub use protocol::{
-    BootTimes, DrawnText, HeapStats, Info, RecordLayout, Sample, StackMark, SAMPLES_HEADER,
-    SAMPLE_BYTES,
+    event_kind, result_name, site_id, BootTimes, DrawnText, Event, HeapStats, Info, RecordLayout,
+    Sample, SiteTiming, StackMark, EVENT_BYTES, EVENT_HEADER, SAMPLES_HEADER, SAMPLE_BYTES,
 };
 pub use screen::{Row, Screen};
 
@@ -78,6 +78,7 @@ impl std::str::FromStr for Button {
 pub enum Fault {
     UndefinedInstruction = 1,
     SoftwareAbort = 2,
+    DataAbort = 3,
 }
 
 impl std::str::FromStr for Fault {
@@ -86,7 +87,29 @@ impl std::str::FromStr for Fault {
         match s.to_ascii_lowercase().as_str() {
             "undefined" => Ok(Self::UndefinedInstruction),
             "abort" => Ok(Self::SoftwareAbort),
-            _ => Err(format!("Unknown fault {s}; use undefined or abort")),
+            "data" => Ok(Self::DataAbort),
+            _ => Err(format!("Unknown fault {s}; use undefined, abort or data")),
+        }
+    }
+}
+
+/// The hold switch as HOLD sets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hold {
+    /// Back to the real switch.
+    Release = 0,
+    Locked = 1,
+    Unlocked = 2,
+}
+
+impl std::str::FromStr for Hold {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "on" | "locked" => Ok(Self::Locked),
+            "off" | "unlocked" => Ok(Self::Unlocked),
+            "release" => Ok(Self::Release),
+            _ => Err(format!("Unknown hold state {s}; use on, off or release")),
         }
     }
 }
@@ -367,6 +390,58 @@ impl Debugger {
         match reset_after {
             None => self.out(FLUSH, 0, 0),
             Some(delay) => self.out(FLUSH, FLUSH_THEN_RESET, delay),
+        }
+    }
+
+    /// Time a core site from the device's next UI timer tick; `None` stops
+    /// timing every site.
+    pub fn time_site(&mut self, site: Option<u32>) -> Result<()> {
+        let (value, index) = split(site.unwrap_or(0));
+        self.out(TIME_SITE, value, index)
+    }
+
+    pub fn timings(&mut self) -> Result<Vec<SiteTiming>> {
+        parse_timings(&self.read_reply(TIMINGS, 0, 4 + 8 * 20)?)
+    }
+
+    /// Start the event log with room for `entries`; 0 stops it.
+    pub fn events(&mut self, entries: u16) -> Result<()> {
+        self.out(EVENTS, entries, 0)
+    }
+
+    /// Drain the event log; returns the events and how many it dropped.
+    pub fn event_log(&mut self) -> Result<(Vec<Event>, u32)> {
+        let n = self.info.max_transfer as usize;
+        parse_event_log(&self.read_reply(EVENT_LOG, 0, n)?)
+    }
+
+    pub fn hold(&mut self, hold: Hold) -> Result<()> {
+        self.out(HOLD, hold as u16, 0)
+    }
+
+    /// Turn the extension in `file`.rvx on or off as Settings > Extensions
+    /// does; returns its rv_result code.
+    pub fn set_extension(&mut self, file: &str, enabled: bool) -> Result<i32> {
+        if file.is_empty() || file.len() >= NAME_BYTES || file.contains('\0') {
+            return Err(invalid(format!(
+                "Extension file names have 1 to {} bytes",
+                NAME_BYTES - 1
+            )));
+        }
+        let mut name = [0u8; NAME_BYTES];
+        name[..file.len()].copy_from_slice(file.as_bytes());
+        self.write(self.info.extension_name, &name)?;
+        self.out(EXTENSION, enabled as u16, 0)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            sleep(Duration::from_millis(50));
+            match parse_extension_result(&self.read_reply(EXTENSION_RESULT, 0, 8)?)? {
+                ExtensionResult::Done(code) => return Ok(code),
+                _ if Instant::now() > deadline => {
+                    return Err(invalid("The extension change did not finish within 5 s"))
+                }
+                _ => {}
+            }
         }
     }
 

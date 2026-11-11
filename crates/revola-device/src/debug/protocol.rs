@@ -24,6 +24,18 @@ pub(crate) const STACK: u8 = 0xdd;
 pub(crate) const FAULT: u8 = 0xde;
 pub(crate) const RESET: u8 = 0xdf;
 pub(crate) const FLUSH: u8 = 0xe0;
+pub(crate) const TIME_SITE: u8 = 0xe1;
+pub(crate) const TIMINGS: u8 = 0xe2;
+pub(crate) const EVENTS: u8 = 0xe3;
+pub(crate) const EVENT_LOG: u8 = 0xe4;
+pub(crate) const HOLD: u8 = 0xe5;
+pub(crate) const EXTENSION: u8 = 0xe6;
+pub(crate) const EXTENSION_RESULT: u8 = 0xe7;
+/// Bytes of EXTENSION's name buffer on the device, NUL included.
+pub(crate) const NAME_BYTES: usize = 32;
+/// EVENT_LOG: {count, dropped}, then {time, kind, argument} per event.
+pub const EVENT_HEADER: usize = 8;
+pub const EVENT_BYTES: usize = 12;
 
 pub(crate) const INFO_SIZE: usize = 64;
 const INFO_MAGIC: u32 = u32::from_le_bytes(*b"RVUD");
@@ -61,6 +73,13 @@ pub(crate) fn request_name(request: u8) -> &'static str {
         FAULT => "USB Debug FAULT",
         RESET => "USB Debug RESET",
         FLUSH => "USB Debug FLUSH",
+        TIME_SITE => "USB Debug TIME_SITE",
+        TIMINGS => "USB Debug TIMINGS",
+        EVENTS => "USB Debug EVENTS",
+        EVENT_LOG => "USB Debug EVENT_LOG",
+        HOLD => "USB Debug HOLD",
+        EXTENSION => "USB Debug EXTENSION",
+        EXTENSION_RESULT => "USB Debug EXTENSION_RESULT",
         _ => "USB Debug request",
     }
 }
@@ -103,6 +122,8 @@ pub struct Info {
     pub record: RecordLayout,
     /// Ticks per second of the clock CLOCK, BOOT and SAMPLES report.
     pub clock_hz: u32,
+    /// Where EXTENSION's file name goes.
+    pub extension_name: u32,
 }
 
 impl Info {
@@ -142,6 +163,7 @@ impl Info {
                 failure: u16_at(b, 46),
             },
             clock_hz: u32_at(b, 48),
+            extension_name: u32_at(b, 52),
         })
     }
 }
@@ -195,9 +217,10 @@ pub(crate) fn parse_clock(b: &[u8]) -> Result<u32> {
 pub struct BootTimes {
     /// The extension's entry.
     pub entry: u32,
-    pub main_menu: u32,
     /// The first UI timer tick after the entry.
     pub first_idle: u32,
+    /// The first layout shown without an animation, when it was the main menu.
+    pub main_menu: u32,
     /// The sequence number the settings held at the entry.
     pub flush_at_boot: u32,
     /// The last sequence number FLUSH stored.
@@ -356,5 +379,136 @@ pub(crate) mod encode {
         let n = b.len() as u32;
         b[8..12].copy_from_slice(&n.to_le_bytes());
         b
+    }
+}
+
+/// One timed site from TIMINGS; times in clock ticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct SiteTiming {
+    pub site: u32,
+    pub calls: u32,
+    pub total: u32,
+    pub min: u32,
+    pub max: u32,
+}
+
+/// TIMINGS: {count}, then count {site, calls, total, min, max}.
+pub(crate) fn parse_timings(b: &[u8]) -> Result<Vec<SiteTiming>> {
+    let [count] = words(b, "TIMINGS")?;
+    let count = count as usize;
+    if 4 + count * 20 > b.len() {
+        return Err(invalid("TIMINGS count exceeds the reply"));
+    }
+    Ok((0..count)
+        .map(|i| {
+            let w = |k: usize| u32_at(b, 4 + i * 20 + k * 4);
+            SiteTiming {
+                site: w(0),
+                calls: w(1),
+                total: w(2),
+                min: w(3),
+                max: w(4),
+            }
+        })
+        .collect())
+}
+
+/// Event kinds of EVENT_LOG: the core's tracepoints, then the device's polls.
+pub mod event_kind {
+    pub const FLUSH_BEGIN: u32 = 1;
+    pub const FLUSH_END: u32 = 2;
+    pub const LOAD_BEGIN: u32 = 3;
+    pub const LOAD_END: u32 = 4;
+    pub const UNLOAD: u32 = 5;
+    pub const ASSET_BEGIN: u32 = 6;
+    pub const ASSET_END: u32 = 7;
+    pub const DECODE_BEGIN: u32 = 8;
+    pub const DECODE_END: u32 = 9;
+    pub const DISK_POWER: u32 = 0x100;
+    pub const UNDERRUN: u32 = 0x101;
+
+    pub fn name(kind: u32) -> &'static str {
+        match kind {
+            FLUSH_BEGIN => "settings flush begins",
+            FLUSH_END => "settings flush ends",
+            LOAD_BEGIN => "module load begins",
+            LOAD_END => "module load ends",
+            UNLOAD => "module unloads",
+            ASSET_BEGIN => "asset load begins",
+            ASSET_END => "asset load ends",
+            DECODE_BEGIN => "lz decode begins",
+            DECODE_END => "lz decode ends",
+            DISK_POWER => "disk controller power",
+            UNDERRUN => "audio underruns",
+            _ => "unknown event",
+        }
+    }
+}
+
+/// One EVENT_LOG entry; `time` in clock ticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Event {
+    pub time: u32,
+    pub kind: u32,
+    pub argument: u32,
+}
+
+/// EVENT_LOG: {count, dropped}, then count {time, kind, argument}.
+pub(crate) fn parse_event_log(b: &[u8]) -> Result<(Vec<Event>, u32)> {
+    let [count, dropped] = words(b, "EVENT_LOG")?;
+    let count = count as usize;
+    if EVENT_HEADER + count * EVENT_BYTES > b.len() {
+        return Err(invalid("EVENT_LOG count exceeds the reply"));
+    }
+    let events = (0..count)
+        .map(|i| {
+            let at = EVENT_HEADER + i * EVENT_BYTES;
+            Event {
+                time: u32_at(b, at),
+                kind: u32_at(b, at + 4),
+                argument: u32_at(b, at + 8),
+            }
+        })
+        .collect();
+    Ok((events, dropped))
+}
+
+/// EXTENSION_RESULT: the state of the last EXTENSION and its rv_result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExtensionResult {
+    None,
+    Pending,
+    Done(i32),
+}
+
+pub(crate) fn parse_extension_result(b: &[u8]) -> Result<ExtensionResult> {
+    let [state, result] = words(b, "EXTENSION_RESULT")?;
+    match state {
+        0 => Ok(ExtensionResult::None),
+        1 => Ok(ExtensionResult::Pending),
+        2 => Ok(ExtensionResult::Done(result as i32)),
+        _ => Err(invalid(format!("Unknown EXTENSION_RESULT state {state}"))),
+    }
+}
+
+/// The id extensions bind a core site by: FNV-1a of its sites.def row name.
+pub fn site_id(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// The name of an rv_result code.
+pub fn result_name(code: i32) -> &'static str {
+    match code {
+        0 => "RV_OK",
+        1 => "RV_CONFLICT",
+        2 => "RV_NO_MEMORY",
+        3 => "RV_NOT_BOUND",
+        4 => "RV_BAD_SITE",
+        5 => "RV_BAD_ARGUMENT",
+        6 => "RV_NOT_FOUND",
+        7 => "RV_ALREADY_BOUND",
+        _ => "unknown result",
     }
 }

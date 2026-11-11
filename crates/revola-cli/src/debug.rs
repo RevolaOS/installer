@@ -4,8 +4,8 @@ use super::{
     ensure_new_output, parse_selector, print_json, read_bounded, write_new_output, CliResult,
 };
 use revola_device::{
-    png, BootTimes, Button, Debugger, DeviceSelector, Fault, HeapReport, Sample, Screen,
-    SAMPLES_HEADER, SAMPLE_BYTES, SCREEN_HEIGHT, SCREEN_WIDTH,
+    event_kind, png, result_name, site_id, BootTimes, Button, Debugger, DeviceSelector, Fault,
+    HeapReport, Hold, Sample, Screen, SAMPLES_HEADER, SAMPLE_BYTES, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 use serde::Serialize;
 use std::{
@@ -22,6 +22,8 @@ const TOP_CALLERS: usize = 3;
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(90);
 /// FLUSH counts its reset delay in units of 100 µs.
 const FLUSH_DELAY_UNIT_US: u32 = 100;
+/// Sites TIME_SITE can time at once.
+const TIMED_SITES: usize = 8;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Location {
@@ -82,6 +84,21 @@ enum Action {
         /// In units of 100 µs.
         reset_after: Option<u16>,
     },
+    TimeSite {
+        /// Row names from sites.def or numeric ids.
+        sites: Vec<String>,
+        seconds: u32,
+    },
+    Events {
+        seconds: u32,
+        entries: u16,
+    },
+    Hold(Hold),
+    Extensions,
+    Extension {
+        file: String,
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -134,6 +151,8 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         "wait" => &["--until", "--timeout"],
         "heap-watch" => &["--period", "--seconds"],
         "flush" => &["--reset-after"],
+        "time-site" => &["--seconds"],
+        "events" => &["--seconds", "--entries"],
         _ => &[],
     };
     if let Some(option) = options
@@ -196,6 +215,27 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             timeout: Duration::from_secs(positive("--timeout", 5)?.into()),
         },
         ("goto", [path]) => Action::Goto(path.to_string()),
+        ("time-site", sites) if !sites.is_empty() && sites.len() <= TIMED_SITES => {
+            Action::TimeSite {
+                sites: sites.iter().map(|s| s.to_string()).collect(),
+                seconds: positive("--seconds", 10)?,
+            }
+        }
+        ("events", []) => Action::Events {
+            seconds: positive("--seconds", 10)?,
+            entries: u16::try_from(positive("--entries", 256)?)
+                .map_err(|_| "--entries is at most 65535")?,
+        },
+        ("hold", [state]) => Action::Hold(state.parse()?),
+        ("extensions", []) => Action::Extensions,
+        ("extension", [file, state]) => Action::Extension {
+            file: file.to_string(),
+            enabled: match *state {
+                "on" => true,
+                "off" => false,
+                other => return Err(format!("extension {file} {other}: use on or off")),
+            },
+        },
         ("clock", []) => Action::Clock,
         ("boot", []) => Action::Boot,
         ("heap-watch", []) => Action::HeapWatch {
@@ -431,6 +471,11 @@ fn write_heap_line(elapsed: Duration, heap: &HeapReport, out: &mut impl Write) -
 
 fn seconds(ticks: u32, hz: u32) -> f64 {
     f64::from(ticks) / f64::from(hz.max(1))
+}
+
+/// Seconds from `from` to `to` on the device clock, which wraps.
+fn seconds_between(from: u32, to: u32, hz: u32) -> f64 {
+    f64::from(to.wrapping_sub(from) as i32) / f64::from(hz.max(1))
 }
 
 fn print_boot(boot: &BootTimes, hz: u32, json: bool, out: &mut impl Write) -> CliResult<()> {
@@ -785,6 +830,133 @@ pub(super) fn run(args: Args, json: bool) -> CliResult<u8> {
                 return Ok(2);
             }
         }
+        Action::TimeSite { sites, seconds } => {
+            let ids: Vec<(String, u32)> = sites
+                .iter()
+                .map(|s| (s.clone(), number(s).unwrap_or_else(|_| site_id(s))))
+                .collect();
+            for (_, id) in &ids {
+                debugger.time_site(Some(*id))?;
+            }
+            sleep(Duration::from_secs(seconds.into()));
+            let timings = debugger.timings();
+            let stopped = debugger.time_site(None);
+            let timings = timings?;
+            stopped?;
+            let rows: Vec<_> = ids
+                .iter()
+                .map(|(name, id)| (name, timings.iter().find(|t| t.site == *id)))
+                .collect();
+            if json {
+                let value: Vec<_> = rows
+                    .iter()
+                    .map(|(name, t)| serde_json::json!({"site": name, "timing": t}))
+                    .collect();
+                print_json(&value)?;
+            } else {
+                for (name, t) in &rows {
+                    match t {
+                        Some(t) => writeln!(
+                            out,
+                            "{name}: {} calls, {} µs total, {:.1} µs mean, {} min, {} max",
+                            t.calls,
+                            t.total,
+                            f64::from(t.total) / f64::from(t.calls.max(1)),
+                            t.min,
+                            t.max
+                        )?,
+                        None => writeln!(
+                            out,
+                            "{name}: not timed (unknown site, no filter possible, or an exclusive handler holds it)"
+                        )?,
+                    }
+                }
+            }
+            if rows.iter().any(|(_, t)| t.is_none()) {
+                return Ok(2);
+            }
+        }
+        Action::Events { seconds, entries } => {
+            debugger.events(entries)?;
+            let start = debugger.clock()?;
+            let hz = debugger.info().clock_hz;
+            let deadline = Instant::now() + Duration::from_secs(seconds.into());
+            let mut dropped = 0u32;
+            let mut all = Vec::new();
+            let result = loop {
+                sleep(Duration::from_millis(250));
+                match debugger.event_log() {
+                    Ok((events, lost)) => {
+                        dropped = dropped.saturating_add(lost);
+                        all.extend(events);
+                    }
+                    Err(e) => break Err(e),
+                }
+                if Instant::now() > deadline {
+                    break Ok(());
+                }
+            };
+            let stopped = debugger.events(0);
+            result?;
+            stopped?;
+            if json {
+                print_json(
+                    &serde_json::json!({"hz": hz, "start": start, "dropped": dropped, "events": all}),
+                )?;
+            } else {
+                for e in &all {
+                    writeln!(
+                        out,
+                        "{:10.6} s  {} {:#x}",
+                        seconds_between(start, e.time, hz),
+                        event_kind::name(e.kind),
+                        e.argument
+                    )?;
+                }
+                writeln!(out, "{} events, {dropped} dropped", all.len())?;
+            }
+        }
+        Action::Hold(hold) => {
+            debugger.hold(hold)?;
+            let name = format!("{hold:?}").to_lowercase();
+            if json {
+                print_json(&serde_json::json!({"hold": name}))?;
+            } else {
+                writeln!(out, "Hold {name}")?;
+            }
+        }
+        Action::Extensions => {
+            let heap = debugger.heap()?;
+            if json {
+                print_json(&heap.extensions)?;
+            } else {
+                for e in &heap.extensions {
+                    writeln!(
+                        out,
+                        "{:<33} {:>10} bytes  failure {}",
+                        e.file, e.live, e.failure
+                    )?;
+                }
+            }
+        }
+        Action::Extension { file, enabled } => {
+            let code = debugger.set_extension(&file, enabled)?;
+            if json {
+                print_json(
+                    &serde_json::json!({"file": file, "enabled": enabled, "result": result_name(code)}),
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "{file} {}: {}",
+                    if enabled { "on" } else { "off" },
+                    result_name(code)
+                )?;
+            }
+            if code != 0 {
+                return Ok(2);
+            }
+        }
         Action::Goto(path) => {
             let (steps, screen) = debugger.goto(&path)?;
             if json {
@@ -877,9 +1049,40 @@ mod tests {
             parse_line("fault abort").unwrap().action,
             Action::Fault(Fault::SoftwareAbort)
         );
+        assert_eq!(
+            parse_line("time-site TextView_DrawString_entry 0x7986a911 --seconds 3")
+                .unwrap()
+                .action,
+            Action::TimeSite {
+                sites: vec!["TextView_DrawString_entry".into(), "0x7986a911".into()],
+                seconds: 3
+            }
+        );
+        assert_eq!(
+            parse_line("extension hello_world off").unwrap().action,
+            Action::Extension {
+                file: "hello_world".into(),
+                enabled: false
+            }
+        );
+        assert_eq!(
+            parse_line("hold release").unwrap().action,
+            Action::Hold(Hold::Release)
+        );
+        assert_eq!(
+            parse_line("events --entries 64").unwrap().action,
+            Action::Events {
+                seconds: 10,
+                entries: 64
+            }
+        );
         for line in [
             "",
             "info extra",
+            "time-site",
+            "time-site a b c d e f g h i",
+            "extension hello_world maybe",
+            "hold sideways",
             "flush --reset-after 6553600",
             "stack deep",
             "fault prefetch",

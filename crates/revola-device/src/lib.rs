@@ -25,9 +25,10 @@ pub use upload::{
 
 pub use bootloader::{BootloaderFingerprint, BootloaderReport};
 pub use debug::{
-    png, BootTimes, Button, Debugger, DrawnText, ExtensionHeap, Fault, HeapReport, HeapStats,
-    Info as DebugInfo, RecordLayout, Row, Sample, Screen, StackMark, HEIGHT as SCREEN_HEIGHT,
-    SAMPLES_HEADER, SAMPLE_BYTES, WIDTH as SCREEN_WIDTH,
+    event_kind, png, result_name, site_id, BootTimes, Button, Debugger, DrawnText,
+    Event as DebugEvent, ExtensionHeap, Fault, HeapReport, HeapStats, Hold, Info as DebugInfo,
+    RecordLayout, Row, Sample, Screen, SiteTiming, StackMark, EVENT_BYTES, EVENT_HEADER,
+    HEIGHT as SCREEN_HEIGHT, SAMPLES_HEADER, SAMPLE_BYTES, WIDTH as SCREEN_WIDTH,
 };
 pub use decrypt::{DecryptOptions, DecryptProgress, DecryptReport, Decrypted};
 pub use img1::classic_img1_body_range;

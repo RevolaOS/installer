@@ -71,9 +71,14 @@ Usage:
     clock | boot
     heap-watch [--period MS] [--seconds N]
     stack [refill]
-    fault undefined|abort
+    fault undefined|abort|data
     reset
     flush [--reset-after MICROSECONDS]
+    time-site SITE... [--seconds N]
+    events [--seconds N] [--entries N]
+    hold on|off|release
+    extensions
+    extension FILE on|off
 
 upload streams through a 64 KiB buffer, verifies disk readback, then returns to DFU.
 Use a signed --bundle with its trusted --key, or a development --helper directory. Existing destination
@@ -122,6 +127,13 @@ reset warm-resets the iPod, waits for it to answer again and prints boot.
 flush stores a new sequence number and flushes the settings. --reset-after resets
 that long after the flush began (0: when it returns), waits for the iPod, and
 reports which copy survived; it exits 2 when neither did.
+time-site times up to 8 core hook sites, named as in sites.def or by id, for
+--seconds (default 10) while you use the iPod; it exits 2 when a site could not be timed.
+events logs disk controller power, audio underruns and the core's settings flushes,
+module loads and asset loads for --seconds (default 10).
+hold forces the hold switch on or off for buttons and the lock icon; release returns it.
+extensions lists the loaded extensions; extension turns one on or off by file name
+as Settings > Extensions does, and exits 2 when the core refuses.
 
 --device uses decimal BUS:ADDRESS from `revola devices`, not USB VID:PID.
 Omit it when only one DFU device is connected.

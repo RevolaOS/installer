@@ -144,6 +144,7 @@ fn info_reply_is_parsed_and_checked() {
                 failure: 0x34,
             },
             clock_hz: 1_000_000,
+            extension_name: 0,
         }
     );
 
@@ -420,4 +421,100 @@ fn instruments_parse_and_send_their_arguments() {
 fn inconsistent_stack_replies_are_refused() {
     assert!(parse_stack(&words(&[0x0900_0000, 0x2_0000, 0x0901_f000, 0x0902_0000])).is_err());
     assert!(parse_stack(&words(&[0x0900_0000, 0x2_0000])).is_err());
+}
+
+#[test]
+fn site_ids_match_the_core() {
+    // From the generated rv_sites.h.
+    assert_eq!(site_id("TextView_DrawString_entry"), 0x5258_7f80);
+    assert_eq!(site_id("UI_DisplayPreparedLayout_call"), 0xd21f_3e6a);
+}
+
+#[test]
+fn timings_and_events_parse() {
+    let mut b = words(&[2]);
+    b.extend(words(&[
+        0x5258_7f80,
+        124,
+        50_583,
+        174,
+        1279,
+        0x7986_a911,
+        24,
+        417,
+        2,
+        117,
+    ]));
+    let timings = parse_timings(&b).unwrap();
+    assert_eq!(timings.len(), 2);
+    assert_eq!(
+        timings[0],
+        SiteTiming {
+            site: 0x5258_7f80,
+            calls: 124,
+            total: 50_583,
+            min: 174,
+            max: 1279
+        }
+    );
+    assert!(parse_timings(&words(&[3, 0, 0, 0, 0, 0])).is_err());
+
+    let mut b = words(&[2, 1]);
+    b.extend(words(&[
+        100,
+        event_kind::FLUSH_BEGIN,
+        44,
+        200,
+        event_kind::FLUSH_END,
+        1,
+    ]));
+    let (events, dropped) = parse_event_log(&b).unwrap();
+    assert_eq!(dropped, 1);
+    assert_eq!(
+        events[1],
+        Event {
+            time: 200,
+            kind: event_kind::FLUSH_END,
+            argument: 1
+        }
+    );
+    assert!(parse_event_log(&b[..b.len() - 4]).is_err());
+}
+
+#[test]
+fn extension_writes_the_name_then_waits_for_the_result() {
+    let mut info = encode::info(512);
+    put32(&mut info, 52, 0x0be4_c208);
+    let fake = Fake::new(info);
+    fake.reply(EXTENSION_RESULT, words(&[2, 6]));
+    let mut debugger = fake.debugger();
+    assert_eq!(debugger.set_extension("hello_world", false).unwrap(), 6);
+    let address = fake.requests(SET_ADDRESS);
+    assert_eq!((address[0].2, address[0].3), (0xc208, 0x0be4));
+    let words_sent = fake.requests(WRITE32);
+    assert_eq!(words_sent.len(), NAME_BYTES / 4);
+    assert_eq!(
+        (words_sent[0].2, words_sent[0].3),
+        (u16::from_le_bytes(*b"he"), u16::from_le_bytes(*b"ll"))
+    );
+    assert_eq!(fake.requests(EXTENSION)[0].2, 0);
+    assert!(debugger
+        .set_extension(&"x".repeat(NAME_BYTES), true)
+        .is_err());
+    assert!(debugger.set_extension("", true).is_err());
+}
+
+#[test]
+fn hold_and_site_timing_send_their_arguments() {
+    let fake = Fake::new(encode::info(512));
+    let mut debugger = fake.debugger();
+    debugger.hold(Hold::Unlocked).unwrap();
+    debugger.time_site(Some(0x5258_7f80)).unwrap();
+    debugger.time_site(None).unwrap();
+    debugger.events(64).unwrap();
+    assert_eq!(fake.requests(HOLD)[0].2, 2);
+    let sites = fake.requests(TIME_SITE);
+    assert_eq!((sites[0].2, sites[0].3), (0x7f80, 0x5258));
+    assert_eq!((sites[1].2, sites[1].3), (0, 0));
+    assert_eq!(fake.requests(EVENTS)[0].2, 64);
 }
