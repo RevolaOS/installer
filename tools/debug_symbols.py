@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Export the debugger's wheel symbols from the generated firmware header."""
+"""Export the debugger's wheel and display symbols from the generated firmware header."""
 
 import argparse
 import re
@@ -10,6 +10,28 @@ NAMES = {
     "WheelState_notify_pending": "WHEEL_STATE_NOTIFY_PENDING",
     "WheelState_position": "WHEEL_STATE_POSITION",
     "WheelState_reported_position": "WHEEL_STATE_REPORTED_POSITION",
+    "DisplayPipe_control": "CONTROL",
+    "DisplayPipe_order": "ORDER",
+    "DisplayPipe_slot0": "SLOT0",
+    "DisplayPipe_slot_step": "SLOT_STEP",
+    "DisplaySlot_stride": "SLOT_STRIDE",
+    "DisplaySlot_format": "SLOT_FORMAT",
+    "DisplaySlot_source": "SLOT_SOURCE",
+    "DisplaySlot_size": "SLOT_SIZE",
+    "DisplaySlot_position": "SLOT_POSITION",
+    "DisplayVideoMode_YUV420": "VIDEO_MODE_YUV420",
+    "DisplayLayerEnable_Layer0": "LAYER0_ENABLE",
+    "DisplayLayerEnable_Video": "VIDEO_ENABLE",
+    "DisplayPipe_video_mode": "VIDEO_MODE",
+    "DisplayPipe_video_strides": "VIDEO_STRIDES",
+    "DisplayPipe_video_source_start": "VIDEO_SOURCE_START",
+    "DisplayPipe_video_source_end": "VIDEO_SOURCE_END",
+    "DisplayPipe_video_plane0": "VIDEO_PLANE0",
+    "DisplayPipe_video_plane1": "VIDEO_PLANE1",
+    "DisplayPipe_video_plane3": "VIDEO_PLANE3",
+    "DisplayPipe_video_scale": "VIDEO_SCALE",
+    "DisplayPipe_video_position": "VIDEO_POSITION",
+    "DisplayPipe_video_size": "VIDEO_SIZE",
 }
 
 
