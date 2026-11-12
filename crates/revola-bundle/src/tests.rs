@@ -81,6 +81,59 @@ fn tampered_manifest_signature_and_assets_are_rejected() {
 }
 
 #[test]
+fn release_manifest_needs_every_component_and_the_uninstaller() {
+    let f = Fixture::new();
+    let mut release = f.load().unwrap().manifest().clone();
+    let hash = release.assets.keys().next().unwrap().clone();
+    let pinned = &revola_device::firmware::current().inputs["osos.bin"].sha256;
+    release.purpose = Purpose::Release;
+    release.core = Some(Core {
+        api: 1,
+        firmware_build_id: extension::firmware_build_id(pinned).unwrap(),
+    });
+    for (name, format, files) in [
+        (
+            "firmware",
+            "revola-firmware-recipe-v1",
+            &["recipe", "data"][..],
+        ),
+        (
+            "companion",
+            "revola-companion-recipe-v1",
+            &["recipe", "data"],
+        ),
+        ("nor", "revola-nor-template-v1", &["image", "descriptor"]),
+    ] {
+        release.components.insert(
+            name.into(),
+            Component {
+                format: format.into(),
+                files: files
+                    .iter()
+                    .map(|f| (f.to_string(), hash.clone()))
+                    .collect(),
+            },
+        );
+    }
+    assert!(release.validate("0.2.0").is_err());
+    release
+        .components
+        .get_mut("nor")
+        .unwrap()
+        .files
+        .insert("uninstaller".into(), hash);
+    assert!(release.validate("0.2.0").is_ok());
+    // SemVer orders a prerelease before its release, so a beta installer needs a
+    // beta minimum or it refuses the beta bundle.
+    release.minimum_installer_version = "0.1.0".into();
+    assert!(release.validate("0.1.0-beta.1").is_err());
+    release.minimum_installer_version = "0.1.0-beta.1".into();
+    assert!(release.validate("0.1.0-beta.1").is_ok());
+    assert!(release.validate("0.1.0-beta.2").is_ok());
+    assert!(release.validate("0.1.0").is_ok());
+}
+
+#[test]
 fn manifest_contract_rejects_incomplete_releases_paths_unknown_formats_and_limits() {
     let f = Fixture::new();
     let original = f.load().unwrap().manifest().clone();

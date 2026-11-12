@@ -182,6 +182,14 @@ impl Manifest {
                 "Release bundle requires the core profile and all four components",
             ));
         }
+        // What a release installs it must also be able to remove.
+        if self.purpose == Purpose::Release
+            && !self.components["nor"].files.contains_key("uninstaller")
+        {
+            return Err(invalid(
+                "Release bundle requires the bootloader uninstaller",
+            ));
+        }
         if !self.extensions.is_empty() && self.core.is_none() {
             return Err(invalid("Extensions require the core profile"));
         }
@@ -302,6 +310,12 @@ impl VerifiedBundle {
             if !helper.supports_storage_inspection() {
                 return Err(invalid(
                     "Package requires a v3 helper with storage inspection",
+                ));
+            }
+            // A release must be able to undo itself: the helper removes the files.
+            if self.manifest.purpose == Purpose::Release && !helper.supports_file_removal() {
+                return Err(invalid(
+                    "Release bundle requires a helper with file removal",
                 ));
             }
         }

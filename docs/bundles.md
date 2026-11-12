@@ -10,7 +10,7 @@ A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signatur
 | `purpose`, `version`, `minimum_installer_version` | as named; older installers refuse newer bundles |
 | `compatibility` | target, hardware versions, BootROM hash |
 | `core` | `api` (the `rv_api` major) and `firmware_build_id` of the pinned OSOS |
-| `components` | `usb_helper`, `firmware`, `companion`, `nor`, each with a `format` and named files |
+| `components` | `usb_helper`, `firmware`, `companion`, `nor`, each with a `format` and named files; a release bundle has all four, and its `nor` carries the `uninstaller` as well as the `image` and `descriptor` |
 | `extensions` | id to `{format, version, api, file}`; `file` is the SHA-256 of the extension's one `.rvx` |
 | `assets` | hash to size |
 
