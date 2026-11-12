@@ -17,10 +17,17 @@ const REPORTS: &[&str] = &[
     "assembly.json",
     "uploadLoader.json",
     "uploadFirmware.json",
-    "uploadDefaultTheme.json",
-    "uploadDarkTheme.json",
+    "removal.json",
     "result.json",
 ];
+
+/// Extension uploads are numbered, so they are picked up by name pattern.
+fn extension_report(name: &str) -> bool {
+    name.strip_prefix("uploadExtension")
+        .and_then(|rest| rest.strip_suffix(".json"))
+        .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+}
+
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 type Entry = (String, Vec<u8>);
@@ -122,6 +129,14 @@ fn collect(directory: Option<&Path>, session_log: &str, preview: bool) -> Result
                         }
                     };
                     let name = entry.file_name().to_string_lossy().into_owned();
+                    if extension_report(&name) {
+                        match read_report(&entry.path(), &name) {
+                            Ok(Some(content)) => entries.push((name, content)),
+                            Ok(None) => {}
+                            Err(error) => notes.push(format!("Skipped {name}: {error}")),
+                        }
+                        continue;
+                    }
                     if !sector_name(&name) {
                         continue;
                     }
