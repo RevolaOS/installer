@@ -95,10 +95,20 @@ static bool staged_name(const char *name)
            !strcasecmp(name + n - 5, ".part");
 }
 
-/* Append the first child of tree[length] to tree. Returns 1 for a directory, 0 for a
-   file, -1 when none is left and -2 on error. The directory is closed before the
-   caller deletes anything. */
-static int first_child(size_t length, bool staged)
+static const char *const firmware_files[] = {
+    "/Revola/Firmware/loader.bin",
+    "/Revola/Firmware/revola.bin",
+};
+
+static bool firmware_path(const char *path)
+{
+    return !strcasecmp(path, firmware_files[0]) || !strcasecmp(path, firmware_files[1]);
+}
+
+/* Append the child of tree[length] after the first `skip` children to tree. Returns 1
+   for a directory, 0 for a file, -1 when none is left and -2 on error. The directory
+   is closed before the caller deletes anything. */
+static int first_child(size_t length, bool staged, unsigned skip)
 {
     DIR *dir = opendir(length ? tree : "/");
     if (!dir)
@@ -109,6 +119,10 @@ static int first_child(size_t length, bool staged)
         const char *name = entry->d_name;
         if (!strcmp(name, ".") || !strcmp(name, "..") || (staged && !staged_name(name)))
             continue;
+        if (skip) {
+            skip--;
+            continue;
+        }
         size_t n = strlen(name);
         if (length + 1 + n >= sizeof(tree)) {
             kind = -2;
@@ -124,48 +138,52 @@ static int first_child(size_t length, bool staged)
     return kind;
 }
 
-static int remove_tree(size_t length, unsigned depth)
+/* Deletes what it can below tree[length], skipping the firmware files and anything
+   that refuses to go, so one stuck entry never stops the rest. The caller removes the
+   directory itself. */
+static void remove_tree(size_t length, unsigned depth)
 {
-    for (int kind; (kind = first_child(length, false)) != -1; tree[length] = 0) {
-        if (kind == -2 || (kind == 1 && (depth == REMOVE_DEPTH ||
-                                         remove_tree(strlen(tree), depth + 1))) ||
-            (kind == 0 && remove(tree)))
-            return -1;
+    unsigned skip = 0;
+    for (int kind; (kind = first_child(length, false, skip)) >= 0; tree[length] = 0) {
+        if (kind == 1) {
+            if (depth < REMOVE_DEPTH)
+                remove_tree(strlen(tree), depth + 1);
+            if (rmdir(tree))
+                skip++;
+        } else if (firmware_path(tree) || remove(tree)) {
+            skip++;
+        }
     }
-    return rmdir(tree);
 }
 
-/* Reports what was deleted in existing_files: bit 0 companion, bit 1 firmware,
-   bit 2 /Revola, bit 3 staged uploads. Missing entries are not an error. */
+/* existing_files bits 0-3 report what was deleted: companion, firmware, /Revola,
+   staged uploads; bits 4-7 report the same four when something of them remains.
+   Missing entries are neither. The firmware files go last: as long as they exist the
+   RevolaOS bootloader still boots, and the host restores Apple's bootloader whatever
+   remains. */
 static void remove_installation(void)
 {
-    static const char *const files[] = {
-        "/Revola/Firmware/loader.bin",
-        "/Revola/Firmware/revola.bin",
-    };
+    uint32_t *bits = &STORAGE_RESULT->existing_files;
     writes_enabled = true;
-    for (unsigned i = 0; i < 2; ++i)
-        if (file_exists(files[i])) {
-            if (remove(files[i])) {
-                upload_fail(-330);
-                return;
-            }
-            STORAGE_RESULT->existing_files |= 1u << i;
-        }
     strcpy(tree, "/Revola");
-    if (dir_exists(tree)) {
-        if (remove_tree(strlen(tree), 0)) {
-            upload_fail(-331);
-            return;
-        }
-        STORAGE_RESULT->existing_files |= 4;
+    bool had_tree = dir_exists(tree);
+    if (had_tree)
+        remove_tree(strlen(tree), 0);
+    for (unsigned i = 0; i < 2; ++i)
+        if (file_exists(firmware_files[i]))
+            *bits |= remove(firmware_files[i]) ? 16u << i : 1u << i;
+    if (had_tree) {
+        rmdir("/Revola/Firmware");
+        *bits |= rmdir("/Revola") ? 64 : 4;
     }
-    for (int kind; (kind = first_child(0, true)) != -1;) {
+    unsigned skip = 0;
+    for (int kind; (kind = first_child(0, true, skip)) >= 0; tree[0] = 0) {
         if (kind != 0 || remove(tree)) {
-            upload_fail(-332);
-            return;
+            skip++;
+            *bits |= 128;
+        } else {
+            *bits |= 8;
         }
-        STORAGE_RESULT->existing_files |= 8;
     }
 }
 
@@ -319,6 +337,30 @@ static int create_parents(const char *path)
     return 0;
 }
 
+/* Read the renamed file under its final name, the one the bootloader opens, and
+   hash it again. The staged copy was verified before the rename, so a mismatch here
+   is a directory or allocation fault of the replaced path. */
+static int readback_destination(void)
+{
+    fd = open(UPLOAD_RESULT->path, O_RDONLY);
+    if (fd < 0 || ffilesize(fd) != (off_t)upload_config.size)
+        return -1;
+    struct sha256 again;
+    sha256_init(&again);
+    for (unsigned left = upload_config.size; left;) {
+        unsigned count = MIN(left, UPLOAD_CHUNK);
+        if (read(fd, UPLOAD_DATA, count) != (ssize_t)count)
+            return -1;
+        sha256_update(&again, UPLOAD_DATA, count);
+        left -= count;
+    }
+    uint8_t digest[32];
+    sha256_final(&again, digest);
+    int rc = close(fd);
+    fd = -1;
+    return rc || memcmp(digest, UPLOAD_RESULT->source_sha256, 32);
+}
+
 void upload_verify_step(void)
 {
     unsigned left = upload_config.size - UPLOAD_RESULT->verified;
@@ -351,6 +393,10 @@ void upload_verify_step(void)
     writes_enabled = true;
     if (create_parents(UPLOAD_RESULT->path) || rename(temporary, UPLOAD_RESULT->path)) {
         upload_fail(-316);
+        return;
+    }
+    if (readback_destination()) {
+        upload_fail(-317);
         return;
     }
     upload_close();

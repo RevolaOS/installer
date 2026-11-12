@@ -377,6 +377,25 @@ fn status_mismatch_names_the_field_without_trusting_another_sessions_error() {
 }
 
 #[test]
+fn removal_result_reports_deleted_and_remaining_entries() {
+    let mut raw = vec![0; 32];
+    put(&mut raw, 8, 1000);
+    put(&mut raw, 28, 1 | 2 | 8 | 64);
+    let report = super::removal_report(&raw).unwrap();
+    assert!(report.companion && report.firmware && report.staged_uploads);
+    assert!(!report.extensions && report.extensions_left);
+    assert!(!report.companion_left && !report.firmware_left && !report.staged_uploads_left);
+    assert_eq!(report.leftovers(), ["/Revola"]);
+    put(&mut raw, 28, 15);
+    assert!(super::removal_report(&raw).unwrap().leftovers().is_empty());
+    put(&mut raw, 28, 256);
+    assert!(super::removal_report(&raw).is_err());
+    put(&mut raw, 28, 0);
+    put(&mut raw, 8, 0);
+    assert!(super::removal_report(&raw).is_err());
+}
+
+#[test]
 fn storage_diagnostics_report_capacity_partition_geometry_and_rejection() {
     let mut raw = vec![0; diagnostics::DIAGNOSTICS_SIZE];
     for (offset, value) in [

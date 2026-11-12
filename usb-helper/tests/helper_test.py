@@ -55,7 +55,7 @@ int test_rename(const char *, const char *);
 int test_remove(const char *);
 int test_rmdir(const char *);
 DIR *test_opendir(const char *);
-off_t filesize(int);
+off_t ffilesize(int);
 int upload_write_allowed(uint64_t, int);
 #ifndef TEST_IMPLEMENTATION
 #define open test_open
@@ -79,7 +79,7 @@ HARNESS = r"""
 uint8_t test_buffer[65536] __attribute__((aligned(32)));
 struct upload_result test_result;
 struct storage_result test_storage;
-static int fault, mounts, sleeps, opens;
+static int fault, mounts, sleeps, opens; static bool renamed;
 static bool corrupt;
 void filesystem_init(void) {}
 int disk_mount_all(void) { mounts++; return fault==11 ? 0 : 1; }
@@ -94,11 +94,11 @@ bool dir_exists(const char *p) {struct stat s; return !stat(p+1,&s) && S_ISDIR(s
 int test_mkdir(const char *p) {assert(upload_write_allowed(394224,1));return mkdir(p+1,0700);}
 int test_open(const char *p,int flags,...) {opens++; return open(p+1,flags,0600);}
 int test_close(int fd) {int r=close(fd);return fault==5 ? -1 : r;}
-ssize_t test_read(int fd,void *p,size_t n) {ssize_t r=read(fd,p,n);if(fault==1 && !corrupt && r>0){((uint8_t*)p)[0]^=1;corrupt=true;}return r;}
+ssize_t test_read(int fd,void *p,size_t n) {if(fault==18&&renamed)return -1;ssize_t r=read(fd,p,n);if(fault==1 && !corrupt && r>0){((uint8_t*)p)[0]^=1;corrupt=true;}return r;}
 ssize_t test_write(int fd,const void *p,size_t n) {assert(upload_write_allowed(394224,1));if(fault==2)return -1;return write(fd,p,n);}
 int test_fsync(int fd) {if(fault==3)return -1;return fsync(fd);}
-int test_rename(const char *a,const char *b) {assert(upload_write_allowed(394224,1));if(fault==4)return -1;return rename(a+1,b+1);}
-int test_remove(const char *p) {assert(upload_write_allowed(394224,1));return unlink(p+1);}
+int test_rename(const char *a,const char *b) {assert(upload_write_allowed(394224,1));if(fault==4)return -1;renamed=true;return rename(a+1,b+1);}
+int test_remove(const char *p) {assert(upload_write_allowed(394224,1));if(fault==17&&strstr(p,"state.bin"))return -1;return unlink(p+1);}
 int test_rmdir(const char *p) {assert(upload_write_allowed(394224,1));return rmdir(p+1);}
 DIR *test_opendir(const char *p) {return opendir(p[1] ? p+1 : ".");}
 struct dirinfo dir_get_info(DIR *d,struct dirent *e) {(void)d;return (struct dirinfo){e->d_type==DT_DIR ? ATTR_DIRECTORY : 0};}
@@ -106,13 +106,15 @@ static void close_repeatedly(void);
 static void touch(const char *p) {int f=open(p,O_WRONLY|O_CREAT,0600);assert(f>=0);close(f);}
 static bool present(const char *p) {return access(p,F_OK)==0;}
 static void removal(void) {
-    assert(test_result.state==4);assert(!test_result.rc);assert(test_storage.existing_files==(fault==14 ? 5 : fault==15 ? 0 : 15));
-    assert(!present("Revola/Firmware/loader.bin")&&!present("Revola/Firmware/revola.bin")&&!present("Revola"));
+    assert(test_result.state==4);assert(!test_result.rc);assert(test_storage.existing_files==(fault==14 ? 5 : fault==15 ? 0 : fault==17 ? 75 : 15));
+    assert(!present("Revola/Firmware/loader.bin")&&!present("Revola/Firmware/revola.bin")&&!present("Revola/Firmware"));
+    if(fault==17)assert(present("Revola/Extensions/eq/data/state.bin")&&!present("Revola/Extensions/eq/main.rvx")&&!present("Revola/Extensions/eq/manifest.bin"));
+    else assert(!present("Revola"));
     assert(!present(".revola-00112233445566778899aabbccddeeff.part"));
     assert(present("iPod_Control/Music/song.m4a")&&present("unrelated-notes.part"));
     close_repeatedly();
 }
-off_t filesize(int fd) {struct stat s;assert(!fstat(fd,&s));return s.st_size;}
+off_t ffilesize(int fd) {struct stat s;assert(!fstat(fd,&s));return s.st_size;}
 static void original(void) {int fd=open("os.bin",O_RDONLY);assert(fd>=0);char b[4]={0};assert(read(fd,b,4)==3);assert(!memcmp(b,"old",3));assert(!close(fd));}
 static void pattern(uint32_t off,unsigned n) {for(unsigned i=0;i<n;i++)test_buffer[i]=(off+i)*37+(off+i)/11;}
 static void close_repeatedly(void) {
@@ -128,7 +130,7 @@ int main(int argc,char **argv)
     const char *target=argc==6 ? argv[5] : "/os.bin";
     unsigned size=strtoul(argv[1],0,10); unsigned overwrite=atoi(argv[2]); bool exists=atoi(argv[3]);fault=atoi(argv[4]);
     if(exists){int f=open("os.bin",O_WRONLY|O_CREAT,0600);assert(write(f,"old",3)==3);close(f);}
-    if(overwrite==3 && fault!=14 && fault!=15){
+    if(overwrite==3 && fault!=14 && fault!=15){ /* fault 17: state.bin refuses to go */
         assert(!mkdir("Revola",0700)&&!mkdir("Revola/Firmware",0700));
         touch("Revola/Firmware/loader.bin");touch("Revola/Firmware/revola.bin");touch(".revola-00112233445566778899aabbccddeeff.part");touch("unrelated-notes.part");
         assert(!mkdir("Revola/Extensions",0700)&&!mkdir("Revola/Extensions/eq",0700)&&!mkdir("Revola/Extensions/eq/data",0700));
@@ -147,7 +149,7 @@ int main(int argc,char **argv)
     memset(test_result.nonce,7,16);
     upload_prepare(394224,1001390072,4096);
     if(fault>=9 && fault<=11){assert(test_result.rc==-303);assert(opens==0);assert(!upload_write_allowed(394224,1));upload_close();return 0;}
-    if(overwrite==3 && (fault==0 || fault==8 || fault==14 || fault==15)){removal();return 0;}
+    if(overwrite==3 && (fault==0 || fault==8 || fault==14 || fault==15 || fault==17)){removal();return 0;}
     if(fault==8){assert(test_result.rc==-322);assert(opens==0);upload_close();return 0;}
     if(overwrite==2){assert(test_result.state==4);assert(!test_result.rc);assert(opens==0);assert(test_storage.existing_files==(fault==16 ? 3 : 0));assert(test_storage.start==394224);assert(test_storage.end==1001390072);assert(test_storage.free_bytes==1024000000);assert(!upload_write_allowed(394224,1));close_repeatedly();assert(sleeps==1);return 0;}
     if(exists&&!overwrite){assert(test_result.rc==-304);assert(opens==0);original();upload_close();return 0;}
@@ -169,13 +171,14 @@ int main(int argc,char **argv)
     while(test_result.state==3){if(exists)original();upload_verify_step();}
     close_repeatedly();
     assert(test_result.state==4);
+    if(fault==18){assert(test_result.rc==-317);assert(present("os.bin"));return 0;}
     if(fault){assert(test_result.rc);if(exists)original();return 0;}
     assert(!test_result.rc);assert(!test_result.rejected);
     assert(test_result.received==size && test_result.written==size && test_result.verified==size);
     assert(!memcmp(test_result.source_sha256,upload_config.sha256,32));
     assert(!memcmp(test_result.disk_sha256,upload_config.sha256,32));
     assert(mounts==2 && sleeps==2);
-    int f=open(target+1,O_RDONLY);assert(f>=0);assert(filesize(f)==size);
+    int f=open(target+1,O_RDONLY);assert(f>=0);assert(ffilesize(f)==size);
     uint8_t readback[65536];
     for(unsigned off=0;off<size;){unsigned n=MIN(size-off,65536);assert(read(f,readback,n)==n);pattern(off,n);assert(!memcmp(test_buffer,readback,n));off+=n;}
     close(f);
@@ -357,7 +360,7 @@ extern struct storage_result test_storage;
         self.run_file(12000000, 2, False, 16, setup=setup)
 
     def test_removal_deletes_only_revola_files(self):
-        for fault in [0, 8, 14, 15]:
+        for fault in [0, 8, 14, 15, 17]:
             with self.subTest(fault=fault):
                 self.run_file(0, 3, False, fault)
 
@@ -375,6 +378,9 @@ extern struct storage_result test_storage;
             for overwrite, exists in [(False, False), (True, True)]:
                 with self.subTest(size=size, overwrite=overwrite, exists=exists):
                     self.run_file(size, overwrite, exists, 0)
+
+    def test_destination_readback_failure_is_reported(self):
+        self.run_file(70000, 1, False, 18)
 
     def test_failures_preserve_existing_file(self):
         for fault in range(1, 9):

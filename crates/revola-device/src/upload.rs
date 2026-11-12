@@ -454,12 +454,34 @@ pub struct StorageReport {
     pub firmware_exists: bool,
 }
 
+/// What the helper deleted, and what refused to go. `extensions` stands for the whole
+/// `/Revola` tree apart from the two firmware files. The helper skips a stuck entry and
+/// carries on, so both can be true for the tree.
 #[derive(Debug, Serialize)]
 pub struct RemovalReport {
     pub companion: bool,
     pub firmware: bool,
     pub extensions: bool,
     pub staged_uploads: bool,
+    pub companion_left: bool,
+    pub firmware_left: bool,
+    pub extensions_left: bool,
+    pub staged_uploads_left: bool,
+}
+
+impl RemovalReport {
+    /// Paths that remain on the iPod, for the listener to delete in disk mode.
+    pub fn leftovers(&self) -> Vec<&'static str> {
+        [
+            (self.companion_left, "/Revola/Firmware/loader.bin"),
+            (self.firmware_left, "/Revola/Firmware/revola.bin"),
+            (self.extensions_left, "/Revola"),
+            (self.staged_uploads_left, "/.revola-*.part"),
+        ]
+        .into_iter()
+        .filter_map(|(left, path)| left.then_some(path))
+        .collect()
+    }
 }
 
 impl Session {
@@ -528,18 +550,7 @@ impl Session {
             ));
         }
         log("Starting file removal helper".into());
-        self.run_storage_helper(helper, 3, 0, directory, log, |data| {
-            let removed = word(data, 28);
-            if quad(data, 0) >= quad(data, 8) || removed > 15 {
-                return Err(invalid("Invalid file removal result"));
-            }
-            Ok(RemovalReport {
-                companion: removed & 1 != 0,
-                firmware: removed & 2 != 0,
-                extensions: removed & 4 != 0,
-                staged_uploads: removed & 8 != 0,
-            })
-        })
+        self.run_storage_helper(helper, 3, 0, directory, log, removal_report)
     }
 
     fn run_storage_helper<T>(
@@ -621,6 +632,25 @@ impl Session {
         session.operation_ready = true;
         Ok((session, report))
     }
+}
+
+/// The helper's storage result after a removal: bits 0-3 of the word at 28 say what
+/// was deleted (companion, firmware, tree, staged uploads), bits 4-7 what remains.
+pub(crate) fn removal_report(data: &[u8]) -> Result<RemovalReport> {
+    let removed = word(data, 28);
+    if quad(data, 0) >= quad(data, 8) || removed > 255 {
+        return Err(invalid("Invalid file removal result"));
+    }
+    Ok(RemovalReport {
+        companion: removed & 1 != 0,
+        firmware: removed & 2 != 0,
+        extensions: removed & 4 != 0,
+        staged_uploads: removed & 8 != 0,
+        companion_left: removed & 16 != 0,
+        firmware_left: removed & 32 != 0,
+        extensions_left: removed & 64 != 0,
+        staged_uploads_left: removed & 128 != 0,
+    })
 }
 
 fn quad(data: &[u8], offset: usize) -> u64 {
