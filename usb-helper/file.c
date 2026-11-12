@@ -266,7 +266,7 @@ static void begin_readback(void)
         return;
     }
     fd = open(temporary, O_RDONLY);
-    if (fd < 0 || filesize(fd) != (off_t)upload_config.size) {
+    if (fd < 0 || ffilesize(fd) != (off_t)upload_config.size) {
         upload_fail(-309);
         return;
     }

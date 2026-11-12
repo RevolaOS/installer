@@ -46,7 +46,7 @@
     "gcc": "9.5.0"
   },
   "target": "classic",
-  "rockbox_version": "10ec9bd530M-260914",
+  "rockbox_version": "f17046eee1M-261112",
   "compatibility": {
     "target": "classic",
     "hardware_versions": [

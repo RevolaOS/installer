@@ -1,5 +1,5 @@
 diff --git a/firmware/common/disk.c b/firmware/common/disk.c
-index 4a660eb705..d8d39435f1 100644
+index d879e6d0e4..0f9f3cb354 100644
 --- a/firmware/common/disk.c
 +++ b/firmware/common/disk.c
 @@ -29,6 +29,9 @@
@@ -12,7 +12,7 @@ index 4a660eb705..d8d39435f1 100644
  
  #if defined(HAVE_BOOTDATA) && !defined(SIMULATOR) && !defined(BOOTLOADER)
  #include "bootdata.h"
-@@ -389,6 +392,48 @@ bool disk_partinfo(int partition, struct partinfo *info)
+@@ -406,6 +409,48 @@ bool disk_partinfo(int partition, struct partinfo *info)
      return true;
  }
  
@@ -61,7 +61,7 @@ index 4a660eb705..d8d39435f1 100644
  int disk_mount(int drive)
  {
      int mounted = 0; /* reset partition-on-drive flag */
-@@ -482,6 +527,17 @@ int disk_mount(int drive)
+@@ -500,6 +545,17 @@ int disk_mount(int drive)
  #endif /* MAX_VIRT_SECTOR_SIZE */
          }
  
@@ -77,10 +77,11 @@ index 4a660eb705..d8d39435f1 100644
 +#endif
 +
  #if defined(MAX_VIRT_SECTOR_SIZE) && defined(MAX_PHYS_SECTOR_SIZE)
+ #if (CONFIG_STORAGE & STORAGE_ATA)
          if (mounted)
-             ata_set_phys_sector_mult(disk_sector_multiplier[IF_MD_DRV(drive)]);
 diff --git a/firmware/include/ipod_nested.h b/firmware/include/ipod_nested.h
 new file mode 100644
+index 0000000000..0df8cda8b1
 --- /dev/null
 +++ b/firmware/include/ipod_nested.h
 @@ -0,0 +1,117 @@
