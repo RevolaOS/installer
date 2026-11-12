@@ -41,7 +41,7 @@ fn setup_result(code: Option<i32>) -> Result<(), String> {
         Some(0) => Ok(()),
         Some(126) => Err("Administrator authentication was cancelled. Try again to enable iPod access.".into()),
         Some(127) => Err("Administrator authentication is unavailable or was denied. Make sure polkit and a desktop authentication agent are installed and running, then try again.".into()),
-        _ => Err("USB access setup failed. Try again; if it still fails, see the Linux setup instructions in the project README.".into()),
+        _ => Err("USB access setup failed. Try again; if it still fails, see the Linux section of docs/app.md in the installer repository.".into()),
     }
 }
 

@@ -38,6 +38,10 @@ The installer keeps the installed bootloader only when its code hash, size and e
 
 Files go first because the RevolaOS bootloader stops when they are missing. Removal is best effort: the helper deletes the `/Revola` tree before the two firmware files, skips anything that refuses to go, and reports both what it deleted and what remains. The app then restores the bootloader regardless and lists the leftovers on the Success screen, so the iPod never ends up with the RevolaOS bootloader and no firmware file. The uninstaller is the `uninstaller` file of the bundle's `nor` component, built by `mks5lboot --mkdfu-uninst ipod6g`; a release bundle without it, or with a helper that cannot remove files, fails validation. The uninstaller moves Apple's bootloader back from the copy every Rockbox dual-boot install keeps, so any such bootloader is removed, as any such bootloader is replaced on install.
 
+## Linux
+
+Only the helper needs an access rule: `app/src-tauri/linux/70-revolaos.rules` tags `f055:180d` with `uaccess`. The deb and rpm packages install it under `/usr/lib/udev/rules.d/` and reload udev. The AppImage cannot, so the app checks for the rule on every start and, when it is missing, writes it to `/etc/udev/rules.d/` through `pkexec`; that needs polkit and a desktop authentication agent. Without them, copy the rule there by hand and run `udevadm control --reload-rules`.
+
 ## Data
 
 Backups and assembled firmware are written under the app data directory for `org.revolaos.installer`. The About screen shows the NOTICE text and the version.
@@ -48,6 +52,8 @@ Backups and assembled firmware are written under the app data directory for `org
 |---|---|---|
 | Firmware bundle | newest published release of `RevolaOS/revola`, `<target>-manifest.json` asset | ed25519 key in `app/src-tauri/src/package.rs` |
 | Installer update | `RevolaOS/installer` releases through the Tauri updater | minisign key in `tauri.conf.json` |
+
+Installer releases are tagged `vYYYY.M.N`, with an optional `-beta.N`, and the workspace version in `Cargo.toml` must equal the tag without the `v`; the release workflow checks that. The scheme is a calendar version in SemVer shape because Cargo, the Tauri updater and the bundle's minimum-installer check all compare versions as SemVer.
 
 `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override the bundle source at build time. The release notes shown for a firmware package and for an installer update are the bodies of those GitHub releases, read when the installer checks.
 

@@ -219,7 +219,7 @@ impl CheckReport {
             &firmware::current().compatibility,
         );
         let firmware_detail = format!(
-            "Original Apple firmware {}; CFW uses 2.0.5",
+            "Original Apple firmware {}; RevolaOS uses 2.0.5",
             identity.recorded_firmware
         );
         self.set(

@@ -53,7 +53,10 @@ if __name__ == "__main__":
     parser.add_argument("header", type=Path)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    output = Path(__file__).resolve().parents[1] / "crates/revola-device/src/debug/symbols.rs"
+    output = (
+        Path(__file__).resolve().parents[1]
+        / "crates/revola-device/src/debug/symbols.rs"
+    )
     generated = generate(args.header.read_text())
     if args.check:
         if output.read_text() != generated:

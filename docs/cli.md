@@ -24,7 +24,7 @@ target/release/revola --help
 | `upload --input FILE --destination /PATH --helper DIR` | sends one file to the data partition through the USB helper and verifies it; `--bundle DIR --key FILE` takes the helper from a bundle instead |
 | `debug COMMAND` | see [Debugging a device](debug.md) |
 
-`revola --help` lists every option. Installation and BootROM inspection commands use BootROM DFU. Select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output.
+`revola --help` lists every option. Device and firmware commands talk to an iPod in BootROM DFU. Select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output.
 
 `apply-recipe` applies a schema 2 recipe (`classic7g-file-v1`) to decrypted Apple inputs on the user's machine; the recipe builder in the revola repository produces the recipe and data files.
 
