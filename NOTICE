@@ -14,7 +14,8 @@ Files that carry an "Adapted from" or copyright header keep that header.
 Third-party work included or built upon:
 
 - Rockbox (https://github.com/Rockbox/rockbox): bootloader, dual-boot
-  installer, hardware drivers and the crossfeed filters. GPL-2.0-or-later.
+  installer, hardware drivers, the crossfeed filters and the compressor.
+  GPL-2.0-or-later.
 - wInd3x (https://github.com/freemyipod/wInd3x) by Serge "q3k" Bazanski:
   BootROM DFU exploit, DFU protocol and payload assembler, ported from Go to
   Rust. GPL-2.0-or-later.
