@@ -1,6 +1,6 @@
 # Working rules
 
-Follow STYLE.md for every file you touch.
+Read STYLE.md first, Principles included, and follow it for every file you touch.
 
 - Never guess. Addresses, struct offsets, Apple behaviour and RAM figures come from the symbols file, Ghidra, the emulator or hardware. If you cannot find it, say so.
 - New Apple functions, data, sites, offsets or constants start in the reversing repository: reverse them in Ghidra and name them there, add them to `symbols/osos-2.0.5/`, regenerate, and copy `osos-2.0.5.h` and `.ld` unchanged into `revola/firmware/`. Code uses only the generated names (`ADDR_`, `SITE_`, struct offsets, `RES_`). Never write a raw address or offset; instruction words appear only as a site's expected word in `sites.def` or as an `RV_HOOK_WORD` replacement with a comment saying what it does. Never edit the copied header.
