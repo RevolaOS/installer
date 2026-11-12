@@ -35,6 +35,8 @@ pub struct InstallResult {
     backup_path: String,
     outcome: InstallOutcome,
     operation: Option<&'static str>,
+    /// Paths an uninstall could not delete from the iPod.
+    leftovers: Vec<&'static str>,
 }
 
 pub(super) struct Job<'a> {
@@ -48,6 +50,7 @@ pub(super) struct Job<'a> {
     cancellable: bool,
     operation: Option<&'static str>,
     bootloader_action: Option<BootloaderAction>,
+    pub(super) leftovers: Vec<&'static str>,
 }
 
 impl<'a> Job<'a> {
@@ -75,6 +78,7 @@ impl<'a> Job<'a> {
             cancellable: true,
             operation: None,
             bootloader_action: None,
+            leftovers: Vec::new(),
         })
     }
 
@@ -316,15 +320,19 @@ impl<'a> Job<'a> {
                     InstallOutcome::UninstallerSent => "UNINSTALL HANDOFF: disk files removed; NOR uninstaller sent; NOR completion not read back",
                     InstallOutcome::FilesRemoved => "UNINSTALL COMPLETE: disk files removed; NOR unchanged; restart requested; boot not verified",
                 });
+                if !self.leftovers.is_empty() {
+                    self.log(format!("Left on the iPod: {}", self.leftovers.join(", ")));
+                }
                 save_json(
                     &self.directory.join("result.json"),
-                    &serde_json::json!({"state": outcome, "operation": self.operation, "bootloader_action": self.bootloader_action}),
+                    &serde_json::json!({"state": outcome, "operation": self.operation, "bootloader_action": self.bootloader_action, "leftovers": self.leftovers}),
                 )?;
                 self.journal.sync_all()?;
                 Ok(InstallResult {
                     backup_path: self.directory.to_string_lossy().into_owned(),
                     outcome,
                     operation: self.operation,
+                    leftovers: self.leftovers.clone(),
                 })
             }
             Err(error) => {

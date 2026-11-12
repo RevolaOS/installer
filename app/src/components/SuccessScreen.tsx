@@ -16,10 +16,24 @@ const bootOptions = [
   { controls: "Hold Play/Pause", system: "Rockbox (if installed separately)" },
 ];
 
+const descriptions = {
+  files_updated: "Update complete. Your iPod will restart. Once it restarts, disconnect USB.",
+  installer_sent:
+    "The bootloader installer was sent. Your iPod finishes the installation on its own and restarts; the screen may stay dark for a moment. Once it restarts, disconnect USB.",
+  files_removed:
+    "RevolaOS is removed. Your iPod will restart into Apple’s software. Once it restarts, disconnect USB.",
+  uninstaller_sent:
+    "The RevolaOS files are removed and the bootloader uninstaller was sent. Your iPod puts Apple’s bootloader back on its own and restarts into Apple’s software. Once it restarts, disconnect USB.",
+};
+
 const SuccessScreen: React.FC<ISuccessScreenProps> = ({ onDone }) => {
   const { headingRef } = useHeadingFocus();
-  const { outcome } = React.useSyncExternalStore(subscribeToInstallation, getInstallationState);
+  const { outcome, leftovers, backupPath } = React.useSyncExternalStore(
+    subscribeToInstallation,
+    getInstallationState,
+  );
   const uninstalled = outcome === "files_removed" || outcome === "uninstaller_sent";
+  const handedOff = outcome === "installer_sent" || outcome === "uninstaller_sent";
 
   return (
     <InstallerScreen.Root aria-labelledby="success-title">
@@ -27,15 +41,20 @@ const SuccessScreen: React.FC<ISuccessScreenProps> = ({ onDone }) => {
         <SuccessSymbol />
       </div>
       <InstallerScreen.Title id="success-title" ref={headingRef} tabIndex={-1}>
-        You’re all set.
+        {handedOff ? "Your iPod takes it from here." : "You’re all set."}
       </InstallerScreen.Title>
       <InstallerScreen.Description className="max-w-125">
-        {outcome === "files_updated"
-          ? "Update complete. Your iPod will restart. Once it restarts, disconnect USB."
-          : uninstalled
-            ? "RevolaOS is removed. Your iPod will restart into Apple’s software. Once it restarts, disconnect USB."
-            : "Your iPod will restart. Once it restarts, disconnect USB."}
+        {outcome
+          ? descriptions[outcome]
+          : "Your iPod will restart. Once it restarts, disconnect USB."}
       </InstallerScreen.Description>
+      {leftovers.length > 0 && (
+        <p className="mx-auto mt-5 max-w-125 text-[13px] leading-6 text-body">
+          Some files could not be deleted and stay on the iPod: {leftovers.join(", ")}. They are
+          harmless with Apple’s bootloader. To remove them, connect the iPod in disk mode and delete
+          them there.
+        </p>
+      )}
       {!uninstalled && (
         <div className="mx-auto mt-7 max-w-125">
           <p className="text-[13px] leading-6 text-body">Choose a system as your iPod starts:</p>
@@ -55,6 +74,11 @@ const SuccessScreen: React.FC<ISuccessScreenProps> = ({ onDone }) => {
             buttons to start RevolaOS.
           </p>
         </div>
+      )}
+      {backupPath && (
+        <p className="mx-auto mt-5 max-w-125 break-all text-[12px] leading-5 text-muted">
+          Backups and logs: {backupPath}
+        </p>
       )}
       <InstallerScreen.Actions className="mt-7">
         <Button.Root className="min-w-40" onClick={onDone}>

@@ -36,7 +36,7 @@ The installer keeps the installed bootloader only when its code hash, size and e
 5. File removal
 6. Rockbox dual-boot uninstaller, which moves Apple's bootloader back into place
 
-Files go first because the RevolaOS bootloader stops when they are missing. The uninstaller is the optional `uninstaller` file of the bundle's `nor` component, built by `mks5lboot --mkdfu-uninst ipod6g`.
+Files go first because the RevolaOS bootloader stops when they are missing. Removal is best effort: the helper deletes the `/Revola` tree before the two firmware files, skips anything that refuses to go, and reports both what it deleted and what remains. The app then restores the bootloader regardless and lists the leftovers on the Success screen, so the iPod never ends up with the RevolaOS bootloader and no firmware file. The uninstaller is the `uninstaller` file of the bundle's `nor` component, built by `mks5lboot --mkdfu-uninst ipod6g`; a release bundle without it, or with a helper that cannot remove files, fails validation. The uninstaller moves Apple's bootloader back from the copy every Rockbox dual-boot install keeps, so any such bootloader is removed, as any such bootloader is replaced on install.
 
 ## Data
 

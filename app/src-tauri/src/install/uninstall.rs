@@ -10,7 +10,9 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 
 /// Remove the RevolaOS files, then restore Apple's bootloader. Files go first because
 /// the RevolaOS bootloader stops at a missing-file screen without them, while the
-/// restored Apple bootloader ignores them. Both steps can run again after a failure.
+/// restored Apple bootloader ignores them. Removal is best effort: whatever refuses
+/// to go is reported and the bootloader is restored anyway, so the iPod never ends up
+/// with the RevolaOS bootloader and no firmware file. Both steps can run again.
 #[tauri::command]
 pub async fn uninstall(
     app: AppHandle,
@@ -34,9 +36,6 @@ fn run(
         bundle.file("usb_helper", "image")?,
         bundle.file("usb_helper", "descriptor")?,
     )?;
-    if !helper.supports_file_removal() {
-        return Err("Choose a newer package with file removal support.".into());
-    }
     let uninstaller = assembly::nor_uninstaller(&bundle)?;
     let checked = take_checked(app, &bundle)?;
     let identity = checked
@@ -98,6 +97,16 @@ fn run(
             ),
             None,
         );
+        job.leftovers = removed.leftovers();
+        if !job.leftovers.is_empty() {
+            job.emit(
+                format!(
+                    "Could not remove {}; continuing so the bootloader is restored",
+                    job.leftovers.join(", ")
+                ),
+                None,
+            );
+        }
 
         if bootloader.apple {
             job.begin_restart()?;

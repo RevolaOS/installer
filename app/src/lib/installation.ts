@@ -64,6 +64,9 @@ interface InstallationState {
   complete: boolean;
   cancelling: boolean;
   outcome: Outcome | null;
+  /** Paths an uninstall could not delete from the iPod. */
+  leftovers: string[];
+  backupPath: string | null;
 }
 
 let state: InstallationState = {
@@ -76,6 +79,8 @@ let state: InstallationState = {
   complete: false,
   cancelling: false,
   outcome: null,
+  leftovers: [],
+  backupPath: null,
 };
 const listeners = new Set<() => void>();
 const publish = (next: InstallationState) => {
@@ -134,6 +139,8 @@ function startJob(
     complete: false,
     cancelling: false,
     outcome: null,
+    leftovers: [],
+    backupPath: null,
   });
   const jobId = ++nextJobId;
   let lastDetail = "";
@@ -156,6 +163,7 @@ function startJob(
       backup_path: string;
       outcome: Outcome;
       operation: "install" | "update" | "uninstall";
+      leftovers?: string[];
     }>(command, { ...args, onEvent: channel });
   };
   void run()
@@ -168,6 +176,8 @@ function startJob(
         running: false,
         complete: true,
         outcome: result.outcome,
+        leftovers: result.leftovers ?? [],
+        backupPath: result.backup_path,
         finishedAt: Date.now(),
       });
     })
