@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Assemble disk firmware and the dual-boot installer from local Apple inputs.
 
-use crate::{invalid, read_file, sha256, write_directory, Result, VerifiedBundle};
+use crate::{invalid, read_file, sha256, write_directory, DeviceFile, Result, VerifiedBundle};
 use revola_device::{firmware, BootloaderFingerprint, BootloaderReport, SysCfg};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
@@ -107,12 +107,17 @@ fn assemble_component(
     recipe.apply(&inputs.0, bundle.file(name, "data")?)
 }
 
-/// Bytes written to the data partition: both images plus every extension file.
+/// Bytes written to the data partition: both images plus every extension and theme file.
 pub fn disk_bytes(bundle: &VerifiedBundle) -> Result<u32> {
     let firmware = Recipe::parse(bundle.file("firmware", "recipe")?)?;
     let companion = Recipe::parse(bundle.file("companion", "recipe")?)?;
-    u32::try_from(firmware.output.bytes + companion.output.bytes + bundle.extension_bytes())
-        .map_err(|_| invalid("Package disk size overflow"))
+    u32::try_from(
+        firmware.output.bytes
+            + companion.output.bytes
+            + bundle.extension_bytes()
+            + bundle.theme_bytes(),
+    )
+    .map_err(|_| invalid("Package disk size overflow"))
 }
 
 pub fn assemble_firmware(bundle: &VerifiedBundle, inputs: &AppleInputs) -> Result<Vec<u8>> {
@@ -327,11 +332,13 @@ pub struct Artifacts {
     pub companion: Vec<u8>,
     pub nor_installer: Vec<u8>,
     /// In upload order.
-    pub extensions: Vec<ExtensionArtifact>,
+    pub extensions: Vec<FileArtifact>,
+    /// In upload order, after the extensions.
+    pub themes: Vec<FileArtifact>,
 }
 
-/// One extension file to upload.
-pub struct ExtensionArtifact {
+/// One extension or theme file to upload.
+pub struct FileArtifact {
     pub id: String,
     /// Device path without the leading slash.
     pub path: String,
@@ -360,6 +367,7 @@ impl Artifacts {
         files.extend(
             self.extensions
                 .iter()
+                .chain(&self.themes)
                 .map(|file| (file.path.as_str(), file.bytes.as_slice())),
         );
         files
@@ -425,16 +433,20 @@ pub fn assemble_with_hardware_policy(
         firmware: assemble_firmware(bundle, inputs)?,
         companion: assemble_companion_with_policy(bundle, inputs, &syscfg, policy)?,
         nor_installer: nor_installer(bundle)?,
-        extensions: bundle
-            .extension_files()
-            .into_iter()
-            .map(|file| ExtensionArtifact {
-                id: file.id.to_owned(),
-                path: file.destination[1..].to_owned(),
-                bytes: file.bytes.to_vec(),
-            })
-            .collect(),
+        extensions: artifacts(bundle.extension_files()),
+        themes: artifacts(bundle.theme_files()),
     })
+}
+
+fn artifacts(files: Vec<DeviceFile<'_>>) -> Vec<FileArtifact> {
+    files
+        .into_iter()
+        .map(|file| FileArtifact {
+            id: file.id.to_owned(),
+            path: file.destination[1..].to_owned(),
+            bytes: file.bytes.to_vec(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

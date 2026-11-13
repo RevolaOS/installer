@@ -194,10 +194,15 @@ fn output_is_created_exclusively_with_a_report() {
         firmware: vec![1, 2],
         companion: vec![3],
         nor_installer: vec![4],
-        extensions: vec![ExtensionArtifact {
+        extensions: vec![FileArtifact {
             id: "eq".into(),
             path: "Revola/Extensions/eq.rvx".into(),
             bytes: vec![5],
+        }],
+        themes: vec![FileArtifact {
+            id: "flat".into(),
+            path: "Revola/Themes/flat.rvt".into(),
+            bytes: vec![6],
         }],
     };
     let report = artifacts.write(&out).unwrap();
@@ -206,6 +211,7 @@ fn output_is_created_exclusively_with_a_report() {
         [1, 2]
     );
     assert_eq!(fs::read(out.join("Revola/Extensions/eq.rvx")).unwrap(), [5]);
+    assert_eq!(fs::read(out.join("Revola/Themes/flat.rvt")).unwrap(), [6]);
     assert_eq!(
         report.files["Revola/Firmware/loader.bin"].sha256,
         sha256(&[3])
@@ -264,6 +270,43 @@ fn nor_uninstaller_is_optional_and_checked() {
         component(&mut bundle, "nor", &[("uninstaller", image)]);
         assert_eq!(nor_uninstaller(&bundle).is_ok(), accepted);
     }
+}
+
+#[test]
+fn disk_bytes_count_both_images_and_every_extension_and_theme() {
+    let fixture = crate::tests::Fixture::new();
+    let mut bundle = VerifiedBundle::load(fixture.dir.path(), &fixture.key, "0.2.0").unwrap();
+    let recipe = serde_json::to_vec(&recipe_json()).unwrap();
+    for name in ["firmware", "companion"] {
+        component(&mut bundle, name, &[("recipe", recipe.clone())]);
+    }
+    assert_eq!(disk_bytes(&bundle).unwrap(), 14);
+    let mut asset = |bytes: Vec<u8>| {
+        let hash = sha256(&bytes);
+        bundle.assets.insert(hash.clone(), bytes);
+        hash
+    };
+    let extension = asset(vec![1; 300]);
+    let theme = asset(vec![2; 1000]);
+    bundle.manifest.extensions.insert(
+        "eq".into(),
+        crate::Extension {
+            format: crate::EXTENSION_FORMAT.into(),
+            version: "0.1.0".into(),
+            api: 1,
+            file: extension,
+        },
+    );
+    assert_eq!(disk_bytes(&bundle).unwrap(), 314);
+    bundle.manifest.themes.insert(
+        "flat".into(),
+        crate::Theme {
+            format: crate::THEME_FORMAT.into(),
+            version: "1.0".into(),
+            file: theme,
+        },
+    );
+    assert_eq!(disk_bytes(&bundle).unwrap(), 1314);
 }
 
 #[test]
