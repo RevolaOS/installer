@@ -5,7 +5,11 @@
 //! core's loader makes, so a package that passes here loads on the device. All
 //! fields are little-endian.
 
-use crate::{invalid, Core, Result};
+use crate::{
+    invalid,
+    le::{half, word},
+    Core, Result,
+};
 use std::collections::BTreeSet;
 
 const RVX_MAGIC: u32 = 0x3058_5652; // RVX0
@@ -21,14 +25,32 @@ const CODEC_RAW: u8 = 0;
 const CODEC_LZ: u8 = 1;
 
 const MANIFEST_MAGIC: u32 = 0x464D_5652; // RVMF
-const MANIFEST_VERSION: u32 = 2;
+const MANIFEST_VERSION: u32 = 3;
 const MANIFEST_MAX: usize = 1024;
-const MANIFEST_HEADER: usize = 44;
+const MANIFEST_HEADER: usize = 48;
+const MAX_CONTENT: usize = 4;
 const MODULE_RECORD: usize = 6;
 const SITE_RECORD: usize = 12;
 const MAX_MODULES: usize = 15;
 const MAX_SITES: usize = 8;
 const TRIGGER_MANUAL: u8 = 2;
+
+/// The loader's rule for a content folder under `/Revola/`: a capital, then 1 to 15
+/// lower-case letters or digits, and not a core folder in any case.
+fn content_folder_valid(name: &str) -> bool {
+    const CORE_FOLDERS: [&str; 5] = ["Extensions", "Data", "Settings", "Firmware", "Crashes"];
+    let mut chars = name.chars();
+    let first = chars.next().is_some_and(|c| c.is_ascii_uppercase());
+    let rest = chars.as_str();
+    first
+        && (1..=15).contains(&rest.len())
+        && rest
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && !CORE_FOLDERS
+            .iter()
+            .any(|folder| folder.eq_ignore_ascii_case(name))
+}
 
 /// The firmware build id is the first eight hex digits of the decrypted OSOS SHA-256.
 pub fn firmware_build_id(osos_sha256: &str) -> Result<u32> {
@@ -36,14 +58,6 @@ pub fn firmware_build_id(osos_sha256: &str) -> Result<u32> {
         .get(..8)
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .ok_or_else(|| invalid("Invalid OSOS fingerprint"))
-}
-
-fn word(bytes: &[u8], at: usize) -> usize {
-    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
-}
-
-fn half(bytes: &[u8], at: usize) -> usize {
-    usize::from(u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()))
 }
 
 /// Check one extension file against the bundle's core and its package id.
@@ -138,7 +152,7 @@ fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
         || word(manifest, 0) as u32 != MANIFEST_MAGIC
         || word(manifest, 4) as u32 != MANIFEST_VERSION
     {
-        return Err(bad("not a version 2 manifest"));
+        return Err(bad("not a version 3 manifest"));
     }
     if word(manifest, 8) >> 16 != core.api as usize {
         return Err(bad("built for another core API"));
@@ -157,12 +171,27 @@ fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
     }
     let strings = &manifest[table..];
     let string = |offset: usize| -> Result<&str> {
-        let tail = strings.get(offset..).ok_or_else(|| bad("string offset"))?;
+        let tail = strings
+            .get(offset..)
+            .filter(|tail| !tail.is_empty())
+            .ok_or_else(|| bad("string offset"))?;
         let end = tail.iter().position(|b| *b == 0).unwrap();
         std::str::from_utf8(&tail[..end]).map_err(|_| bad("string encoding"))
     };
     for text in 0..7 {
         string(half(manifest, 28 + 2 * text))?;
+    }
+    let folders = word(manifest, 44);
+    if folders > MAX_CONTENT {
+        return Err(bad("content folder count"));
+    }
+    let mut folder = half(manifest, 42);
+    for _ in 0..folders {
+        let name = string(folder)?;
+        if !content_folder_valid(name) {
+            return Err(bad("content folder name"));
+        }
+        folder += name.len() + 1;
     }
     if string(half(manifest, 28))? != id {
         return Err(bad("id differs from the package id"));

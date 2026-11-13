@@ -3197,6 +3197,7 @@ dependencies = [
 name = "revola-bundle"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "ed25519-dalek",
  "mu_uefi_decompress",
  "plist",

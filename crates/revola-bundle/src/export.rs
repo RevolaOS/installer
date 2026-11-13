@@ -3,7 +3,7 @@
 
 use crate::{
     asset_filename, invalid, load_assets, read_file, sha256, write_directory, Asset, Compatibility,
-    Component, Core, Extension, Manifest, Purpose, Result, VerifiedBundle, MANIFEST_FILE,
+    Component, Core, Extension, Manifest, Purpose, Result, Theme, VerifiedBundle, MANIFEST_FILE,
     MAX_ASSET_BYTES, MAX_BUNDLE_BYTES, MAX_MANIFEST_BYTES, SCHEMA, SIGNATURE_FILE,
 };
 use serde::Deserialize;
@@ -22,6 +22,8 @@ struct Specification {
     components: BTreeMap<String, Component>,
     #[serde(default)]
     extensions: BTreeMap<String, Extension>,
+    #[serde(default)]
+    themes: BTreeMap<String, Theme>,
 }
 
 pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manifest> {
@@ -36,6 +38,7 @@ pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manife
         core: spec.core,
         components: spec.components,
         extensions: spec.extensions,
+        themes: spec.themes,
         assets: BTreeMap::new(),
     };
     let mut assets = BTreeMap::new();
@@ -49,7 +52,8 @@ pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manife
                 .extensions
                 .values_mut()
                 .map(|extension| &mut extension.file),
-        );
+        )
+        .chain(manifest.themes.values_mut().map(|theme| &mut theme.file));
     for filename in files {
         let bytes = read_file(&base.join(&*filename), MAX_ASSET_BYTES)?;
         let hash = sha256(&bytes);
@@ -77,7 +81,8 @@ pub fn export(specification: &Path, base: &Path, output: &Path) -> Result<Manife
         digest: sha256(&raw),
     }
     .check_helper()?
-    .check_extensions()?;
+    .check_extensions()?
+    .check_themes()?;
     let mut files = BTreeMap::from([(MANIFEST_FILE.to_owned(), raw)]);
     for (hash, bytes) in bundle.assets {
         files.insert(asset_filename(&hash), bytes);
@@ -105,7 +110,8 @@ pub fn pack(directory: &Path, output: &Path) -> Result<Manifest> {
         digest: sha256(&raw),
     }
     .check_helper()?
-    .check_extensions()?;
+    .check_extensions()?
+    .check_themes()?;
     let mut files = BTreeMap::from([(MANIFEST_FILE.to_owned(), raw)]);
     for (hash, bytes) in bundle.assets {
         files.insert(asset_filename(&hash), bytes);

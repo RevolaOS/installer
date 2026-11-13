@@ -6,7 +6,9 @@ pub mod assembly;
 mod distribution;
 pub mod export;
 pub mod extension;
+mod le;
 pub mod preparation;
+pub mod theme;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +32,8 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SCHEMA: u32 = 3;
 pub const EXTENSIONS_ROOT: &str = "/Revola/Extensions";
 pub const EXTENSION_FORMAT: &str = "revola-extension-v1";
+pub const THEMES_ROOT: &str = "/Revola/Themes";
+pub const THEME_FORMAT: &str = "revola-theme-v1";
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
 #[derive(Debug, thiserror::Error)]
@@ -73,7 +77,7 @@ pub struct Component {
     pub files: BTreeMap<String, String>,
 }
 
-/// The core the bundle's extensions were built against.
+/// The core the bundle's extensions and themes were built against.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Core {
@@ -81,6 +85,8 @@ pub struct Core {
     pub api: u32,
     /// Fingerprint constant of the pinned OSOS, checked by the loader in each `.rvx`.
     pub firmware_build_id: u32,
+    /// The first 8 bytes of the themes catalog's SHA-256 as hex; every `.rvt` header carries it.
+    pub catalog_fingerprint: String,
 }
 
 /// One extension package, installed as `/Revola/Extensions/<id>.rvx`.
@@ -91,6 +97,17 @@ pub struct Extension {
     pub version: String,
     pub api: u32,
     /// SHA-256 of the `.rvx` file.
+    pub file: String,
+}
+
+/// One theme, installed as `/Revola/Themes/<id>.rvt` for the Appearance extension.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Theme {
+    pub format: String,
+    /// The theme's own version string; not SemVer.
+    pub version: String,
+    /// SHA-256 of the `.rvt` file.
     pub file: String,
 }
 
@@ -107,11 +124,13 @@ pub struct Manifest {
     pub components: BTreeMap<String, Component>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, Extension>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub themes: BTreeMap<String, Theme>,
     pub assets: BTreeMap<String, Asset>,
 }
 
 /// A file to upload, with its absolute path on the device.
-pub struct ExtensionFile<'a> {
+pub struct DeviceFile<'a> {
     pub id: &'a str,
     pub destination: String,
     pub bytes: &'a [u8],
@@ -190,8 +209,8 @@ impl Manifest {
                 "Release bundle requires the bootloader uninstaller",
             ));
         }
-        if !self.extensions.is_empty() && self.core.is_none() {
-            return Err(invalid("Extensions require the core profile"));
+        if (!self.extensions.is_empty() || !self.themes.is_empty()) && self.core.is_none() {
+            return Err(invalid("Extensions and themes require the core profile"));
         }
         if let Some(core) = &self.core {
             let pinned = &revola_device::firmware::current().inputs["osos.bin"].sha256;
@@ -199,6 +218,9 @@ impl Manifest {
                 return Err(invalid(
                     "Bundle core profile is not built for the pinned firmware",
                 ));
+            }
+            if decode_hex::<8>(&core.catalog_fingerprint).is_err() {
+                return Err(invalid("Invalid catalog fingerprint"));
             }
         }
         for (id, extension) in &self.extensions {
@@ -213,6 +235,18 @@ impl Manifest {
                 return Err(invalid("Invalid extension asset reference"));
             }
             referenced.insert(&extension.file);
+        }
+        for (id, theme) in &self.themes {
+            if !theme::valid_id(id)
+                || theme.format != THEME_FORMAT
+                || !valid_theme_version(&theme.version)
+            {
+                return Err(invalid(format!("Invalid theme: {id}")));
+            }
+            if !self.assets.contains_key(&theme.file) {
+                return Err(invalid("Invalid theme asset reference"));
+            }
+            referenced.insert(&theme.file);
         }
         let mut total = 0usize;
         for (hash, asset) in &self.assets {
@@ -267,7 +301,8 @@ impl VerifiedBundle {
             assets,
         }
         .check_helper()?
-        .check_extensions()
+        .check_extensions()?
+        .check_themes()
     }
 
     /// Every extension file must load on this bundle's core: the checks of the core's loader.
@@ -280,12 +315,22 @@ impl VerifiedBundle {
         Ok(self)
     }
 
+    /// Every theme file must open on the iPod: the checks of the Appearance extension's reader.
+    fn check_themes(self) -> Result<Self> {
+        if let Some(core) = &self.manifest.core {
+            for (id, theme) in &self.manifest.themes {
+                theme::check_theme(id, &self.assets[&theme.file], core)?;
+            }
+        }
+        Ok(self)
+    }
+
     /// Extension files in upload order, by id.
-    pub fn extension_files(&self) -> Vec<ExtensionFile<'_>> {
+    pub fn extension_files(&self) -> Vec<DeviceFile<'_>> {
         self.manifest
             .extensions
             .iter()
-            .map(|(id, extension)| ExtensionFile {
+            .map(|(id, extension)| DeviceFile {
                 id,
                 destination: format!("{EXTENSIONS_ROOT}/{id}.rvx"),
                 bytes: &self.assets[&extension.file],
@@ -295,6 +340,23 @@ impl VerifiedBundle {
 
     pub fn extension_bytes(&self) -> usize {
         self.extension_files().iter().map(|f| f.bytes.len()).sum()
+    }
+
+    /// Theme files in upload order, by id; they follow the extensions.
+    pub fn theme_files(&self) -> Vec<DeviceFile<'_>> {
+        self.manifest
+            .themes
+            .iter()
+            .map(|(id, theme)| DeviceFile {
+                id,
+                destination: format!("{THEMES_ROOT}/{id}.rvt"),
+                bytes: &self.assets[&theme.file],
+            })
+            .collect()
+    }
+
+    pub fn theme_bytes(&self) -> usize {
+        self.theme_files().iter().map(|f| f.bytes.len()).sum()
     }
 
     fn check_helper(self) -> Result<Self> {
@@ -365,7 +427,8 @@ pub fn sign_directory(
         assets,
     }
     .check_helper()?
-    .check_extensions()?;
+    .check_extensions()?
+    .check_themes()?;
     let key = SigningKey::from_bytes(&decode_hex::<32>(secret_hex.trim())?);
     write_new(&directory.join(SIGNATURE_FILE), &key.sign(&raw).to_bytes())?;
     Ok(hex(&key.verifying_key().to_bytes()))
@@ -438,6 +501,13 @@ fn valid_extension_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+}
+
+/// A theme's version as its author wrote it: short printable ASCII.
+fn valid_theme_version(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.bytes().all(|c| c.is_ascii_graphic() || c == b' ')
 }
 
 fn valid_name(value: &str) -> bool {
