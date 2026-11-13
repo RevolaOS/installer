@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 
 const RVX_MAGIC: u32 = 0x3058_5652; // RVX0
 const RVX_FORMAT: u32 = 1;
-const HEADER: usize = 32;
+const HEADER: usize = 28;
 const ENTRY: usize = 20;
 const MODULE_HEADER: usize = 20;
 const MAX_ENTRIES: usize = 0xffff;
@@ -23,6 +23,7 @@ const KIND_MODULE: u8 = 0;
 const KIND_BITMAP: u8 = 2;
 const CODEC_RAW: u8 = 0;
 const CODEC_LZ: u8 = 1;
+const PRELOAD_NEVER: u8 = 2;
 
 const MANIFEST_MAGIC: u32 = 0x464D_5652; // RVMF
 const MANIFEST_VERSION: u32 = 3;
@@ -81,26 +82,28 @@ pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<()> {
     }
     let modules = check_manifest(id, &file[HEADER..HEADER + manifest_bytes], core)?;
     let entries = word(file, 20);
-    let resident = word(file, 24);
     let catalog = HEADER + manifest_bytes.div_ceil(4) * 4;
     let payloads = catalog + entries * ENTRY;
-    if entries > MAX_ENTRIES
-        || entries < modules
-        || resident > entries - modules
-        || payloads > file.len()
-    {
+    if entries > MAX_ENTRIES || entries < modules || payloads > file.len() {
         return Err(bad("catalog does not fit the file or the manifest"));
     }
     let mut names = BTreeSet::new();
+    // The assets sort by preload class; a module carries the first class.
+    let mut previous_preload = 0;
     for index in 0..entries {
         let at = catalog + index * ENTRY;
-        let (name, kind, codec) = (word(file, at), file[at + 4], file[at + 5]);
+        let (name, kind, codec, preload) =
+            (word(file, at), file[at + 4], file[at + 5], file[at + 6]);
         let (offset, stored, bytes) =
             (word(file, at + 8), word(file, at + 12), word(file, at + 16));
         let module = index < modules;
         if (kind == KIND_MODULE) != module || kind > KIND_BITMAP || codec > CODEC_LZ {
             return Err(bad(&format!("entry {index} kind or codec")));
         }
+        if preload > PRELOAD_NEVER || preload < previous_preload || (module && preload != 0) {
+            return Err(bad(&format!("entry {index} preload class")));
+        }
+        previous_preload = preload;
         if (codec == CODEC_RAW && stored != bytes)
             || offset % 4 != 0
             || offset < payloads

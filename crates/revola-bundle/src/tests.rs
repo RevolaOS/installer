@@ -192,13 +192,13 @@ fn future_packages_explain_installer_requirements() {
 /// An extension file from revola's rvx-pack (tools/rvx.py `pack_extension`): id eq, API
 /// 1.7, modules main (always) and editor (screen), a resident lz bitmap "icon" and a data
 /// asset "table" read on request.
-const REFERENCE_PACKAGE: &str = "525658300100000007000100ffb60e6674000000040000000100000045b6064c52564d460300000007000100000000000200000000000000380000000000030006000c001200170024000000000000002500000000002a000101310065710045510042616e647300302e312e30005061756c0047504c2d332e302d6f6e6c7900006d61696e00656469746f7200656469746f720008e290ea00000000e4000000240000002400000078820d5c00000000100100002000000020000000f01540e602010000080100000500000028000000df9b9c4a010000003001000006000000060000000800000004000000040000000100000001000000000102030405060708090a0b080000000211f0001500000008000000040000000000000000000000010000000000000000000000000000000001020304050000";
-/// Offsets in REFERENCE_PACKAGE: the header's entry and resident counts, the catalog, and
-/// the first module payload.
+const REFERENCE_PACKAGE: &str = "525658300100000007000100ffb60e6674000000040000006343d6bc52564d460300000007000100000000000200000000000000380000000000030006000c001200170024000000000000002500000000002a000101310065710045510042616e647300302e312e30005061756c0047504c2d332e302d6f6e6c7900006d61696e00656469746f7200656469746f720008e290ea00000000e0000000240000002400000078820d5c000000000c0100002000000020000000f01540e602010000040100000500000028000000df9b9c4a010002002c01000006000000060000000800000004000000040000000100000001000000000102030405060708090a0b080000000211f0001500000008000000040000000000000000000000010000000000000000000000000000000001020304050000";
+/// Offsets in REFERENCE_PACKAGE: the header's entry count, the manifest, the catalog,
+/// and the first module payload.
 const ENTRY_COUNT: usize = 20;
-const RESIDENT_COUNT: usize = 24;
-const CATALOG: usize = 32 + 116;
-const MAIN_PAYLOAD: usize = 0xe4;
+const MANIFEST: usize = 28;
+const CATALOG: usize = MANIFEST + 116;
+const MAIN_PAYLOAD: usize = 0xe0;
 
 fn unhex(hex: &str) -> Vec<u8> {
     (0..hex.len() / 2)
@@ -392,8 +392,8 @@ fn extensions_are_validated_and_listed_in_upload_order() {
     // One content folder naming the manifest string at `offset`: 0 "eq", 3 "EQ", 6 "Bands".
     let with_content = |file: &[u8], offset: u32| {
         let mut file = file.to_vec();
-        put(&mut file, 32 + 40, 36 | offset << 16);
-        put(&mut file, 32 + 44, 1);
+        put(&mut file, MANIFEST + 40, 36 | offset << 16);
+        put(&mut file, MANIFEST + 44, 1);
         file
     };
     assert!(extension::check_package("eq", &with_content(&good, 6), &core()).is_ok());
@@ -401,7 +401,7 @@ fn extensions_are_validated_and_listed_in_upload_order() {
     // which moves the catalog and every payload.
     let with_folder = |name: &str| {
         let manifest_bytes = word(&good, 16);
-        let strings_bytes = word(&good, 32 + 24);
+        let strings_bytes = word(&good, MANIFEST + 24);
         let added = name.len() + 1;
         let shift = (manifest_bytes + added).div_ceil(4) * 4 - manifest_bytes.div_ceil(4) * 4;
         let mut file = good[..CATALOG].to_vec();
@@ -409,9 +409,9 @@ fn extensions_are_validated_and_listed_in_upload_order() {
         file.resize(CATALOG + shift, 0);
         file.extend_from_slice(&good[CATALOG..]);
         put(&mut file, 16, (manifest_bytes + added) as u32);
-        put(&mut file, 32 + 24, (strings_bytes + added) as u32);
-        put(&mut file, 32 + 40, 36 | (strings_bytes as u32) << 16);
-        put(&mut file, 32 + 44, 1);
+        put(&mut file, MANIFEST + 24, (strings_bytes + added) as u32);
+        put(&mut file, MANIFEST + 40, 36 | (strings_bytes as u32) << 16);
+        put(&mut file, MANIFEST + 44, 1);
         for index in 0..word(&good, ENTRY_COUNT) {
             let at = CATALOG + shift + index * 20 + 8;
             let offset = word(&file, at);
@@ -445,7 +445,22 @@ fn extensions_are_validated_and_listed_in_upload_order() {
         ("eq", "other api", edit(8, 2 << 16)),
         ("ex", "manifest id", good.clone()),
         ("eq", "fewer entries than modules", edit(ENTRY_COUNT, 1)),
-        ("eq", "residents past the catalog", edit(RESIDENT_COUNT, 3)),
+        ("eq", "preload class 3", {
+            let mut file = good.clone();
+            file[entry(3, 6)] = 3;
+            file
+        }),
+        ("eq", "preload classes out of order", {
+            let mut file = good.clone();
+            file[entry(2, 6)] = 2;
+            file[entry(3, 6)] = 1;
+            file
+        }),
+        ("eq", "module with a preload class", {
+            let mut file = good.clone();
+            file[entry(0, 6)] = 1;
+            file
+        }),
         ("eq", "catalog past the end", edit(ENTRY_COUNT, 4000)),
         ("eq", "truncated payload", good[..good.len() - 4].to_vec()),
         ("eq", "unaligned payload", edit(entry(2, 8), 0x105)),
@@ -474,8 +489,8 @@ fn extensions_are_validated_and_listed_in_upload_order() {
         ("eq", "entry outside text", edit(MAIN_PAYLOAD + 16, 8)),
         ("eq", "manifest text at the end of the string table", {
             let mut file = good.clone();
-            let strings_bytes = word(&good, 32 + 24) as u16;
-            file[32 + 28..32 + 30].copy_from_slice(&strings_bytes.to_le_bytes());
+            let strings_bytes = word(&good, MANIFEST + 24) as u16;
+            file[MANIFEST + 28..MANIFEST + 30].copy_from_slice(&strings_bytes.to_le_bytes());
             file
         }),
     ];
