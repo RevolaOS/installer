@@ -47,6 +47,7 @@ const labels: Record<string, string> = {
   uploadLoader: "Uploading companion loader",
   uploadFirmware: "Uploading RevolaOS",
   uploadExtensions: "Uploading extensions",
+  uploadThemes: "Uploading themes",
   removeFiles: "Removing RevolaOS files",
   bootloader: "Preparing bootloader",
   restart: "Restarting iPod",

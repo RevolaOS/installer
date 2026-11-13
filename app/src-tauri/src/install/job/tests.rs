@@ -176,6 +176,7 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
         companion: b"companion".to_vec(),
         nor_installer: b"installer".to_vec(),
         extensions: Vec::new(),
+        themes: Vec::new(),
     };
     let mut reports = Vec::new();
     for (device, firmware) in [
@@ -296,4 +297,70 @@ fn saved_nor_reuse_requires_matching_identity_and_content_hash() {
     drop(job);
     fs::remove_dir_all(directory).unwrap();
     fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
+fn theme_uploads_follow_the_extensions_and_their_reports_are_collected() {
+    let file = |id: &str, path: &str| revola_bundle::assembly::FileArtifact {
+        id: id.into(),
+        path: path.into(),
+        bytes: vec![1],
+    };
+    let artifacts = Artifacts {
+        firmware: vec![1],
+        companion: vec![1],
+        nor_installer: vec![1],
+        extensions: vec![file("eq", "Revola/Extensions/eq.rvx")],
+        themes: vec![file("flat", "Revola/Themes/flat.rvt")],
+    };
+    let uploads = super::super::transfer::uploads(&artifacts);
+    assert_eq!(
+        uploads
+            .iter()
+            .map(|upload| (
+                upload.report.as_str(),
+                upload.stage,
+                upload.destination.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "uploadLoader",
+                "uploadLoader",
+                "/Revola/Firmware/loader.bin"
+            ),
+            (
+                "uploadFirmware",
+                "uploadFirmware",
+                "/Revola/Firmware/revola.bin"
+            ),
+            (
+                "uploadExtension0",
+                "uploadExtensions",
+                "/Revola/Extensions/eq.rvx"
+            ),
+            ("uploadTheme0", "uploadThemes", "/Revola/Themes/flat.rvt"),
+        ]
+    );
+
+    let state = InstallState::default();
+    let mut job = job(&state);
+    let directory = job.directory.clone();
+    for upload in &uploads {
+        job.stage(upload.stage, &upload.name).unwrap();
+        job.save_json(
+            &format!("{}.json", upload.report),
+            &serde_json::json!({"destination": upload.destination}),
+        )
+        .unwrap();
+    }
+    drop(job);
+    let collected: Vec<String> = super::super::diagnostics::collect(Some(&directory), "", false)
+        .unwrap()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(collected.contains(&"uploadExtension0.json".to_owned()));
+    assert!(collected.contains(&"uploadTheme0.json".to_owned()));
+    fs::remove_dir_all(directory).unwrap();
 }

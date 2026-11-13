@@ -36,6 +36,51 @@ pub(super) fn inspect_storage(
     Ok(returned)
 }
 
+/// One file to upload: the name of its report, the stage shown while it uploads,
+/// its name in progress messages, its device path and its bytes.
+pub(super) struct Upload<'a> {
+    pub(super) report: String,
+    pub(super) stage: &'static str,
+    pub(super) name: String,
+    pub(super) destination: String,
+    pub(super) bytes: &'a [u8],
+}
+
+/// The uploads in order: both images, then the extensions, then the themes. Extension
+/// files follow the core so a failed upload never leaves a core that expects
+/// extensions which are not there yet.
+pub(super) fn uploads(artifacts: &Artifacts) -> Vec<Upload<'_>> {
+    let mut files = vec![
+        Upload {
+            report: "uploadLoader".into(),
+            stage: "uploadLoader",
+            name: "companion loader".into(),
+            destination: "/Revola/Firmware/loader.bin".into(),
+            bytes: &artifacts.companion,
+        },
+        Upload {
+            report: "uploadFirmware".into(),
+            stage: "uploadFirmware",
+            name: "RevolaOS".into(),
+            destination: "/Revola/Firmware/revola.bin".into(),
+            bytes: &artifacts.firmware,
+        },
+    ];
+    for (prefix, stage, group) in [
+        ("uploadExtension", "uploadExtensions", &artifacts.extensions),
+        ("uploadTheme", "uploadThemes", &artifacts.themes),
+    ] {
+        files.extend(group.iter().enumerate().map(|(index, file)| Upload {
+            report: format!("{prefix}{index}"),
+            stage,
+            name: file.id.clone(),
+            destination: format!("/{}", file.path),
+            bytes: &file.bytes,
+        }));
+    }
+    files
+}
+
 pub(super) fn install(
     mut session: Session,
     helper: &UploadHelper,
@@ -43,44 +88,21 @@ pub(super) fn install(
     action: assembly::BootloaderAction,
     job: &mut Job<'_>,
 ) -> Result<InstallOutcome> {
-    let mut files = vec![
-        (
-            "uploadLoader".to_owned(),
-            "companion loader".to_owned(),
-            "/Revola/Firmware/loader.bin".to_owned(),
-            artifacts.companion.as_slice(),
-        ),
-        (
-            "uploadFirmware".into(),
-            "RevolaOS".into(),
-            "/Revola/Firmware/revola.bin".into(),
-            &artifacts.firmware,
-        ),
-    ];
-    // Extension files follow the core so a failed upload never leaves a core
-    // that expects extensions which are not there yet.
-    for (index, file) in artifacts.extensions.iter().enumerate() {
-        files.push((
-            format!("uploadExtension{index}"),
-            file.id.clone(),
-            format!("/{}", file.path),
-            &file.bytes,
-        ));
-    }
-    for (stage, name, destination, bytes) in files {
-        let stage = stage.as_str();
-        let label = if stage.starts_with("uploadExtension") {
-            "uploadExtensions"
-        } else {
-            stage
-        };
-        job.stage(label, &format!("Preparing {name}"))?;
+    for Upload {
+        report,
+        stage,
+        name,
+        destination,
+        bytes,
+    } in uploads(artifacts)
+    {
+        job.stage(stage, &format!("Preparing {name}"))?;
         let log_job = std::cell::RefCell::new(&mut *job);
         let uploaded = session.upload_with_log(
             helper,
             &mut Cursor::new(bytes),
             UploadOptions {
-                destination: destination.clone(),
+                destination,
                 overwrite: true,
             },
             |p| {
@@ -105,7 +127,7 @@ pub(super) fn install(
             |detail| log_job.borrow_mut().log(detail),
         )?;
         session = uploaded.session;
-        job.save_json(&format!("{stage}.json"), &uploaded.report)?;
+        job.save_json(&format!("{report}.json"), &uploaded.report)?;
     }
     if action == assembly::BootloaderAction::Keep {
         job.begin_restart()?;

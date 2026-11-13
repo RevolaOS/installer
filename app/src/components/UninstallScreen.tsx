@@ -58,8 +58,8 @@ const UninstallScreen: React.FC<IUninstallScreenProps> = ({ onContinue, onBack }
       </ScreenReveal>
       <ScreenReveal delay={0.08}>
         <InstallerScreen.Description className="max-w-125">
-          This deletes RevolaOS and its extensions, including their settings, and restores Apple’s
-          bootloader. Your music and Apple’s firmware stay on your iPod.
+          This deletes RevolaOS, its extensions and their settings, and its themes, and restores
+          Apple’s bootloader. Your music and Apple’s firmware stay on your iPod.
         </InstallerScreen.Description>
         {localPackage ? (
           <p className="mt-5 text-[12px] text-muted" role="status">

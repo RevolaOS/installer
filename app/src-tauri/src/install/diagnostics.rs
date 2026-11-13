@@ -21,9 +21,10 @@ const REPORTS: &[&str] = &[
     "result.json",
 ];
 
-/// Extension uploads are numbered, so they are picked up by name pattern.
-fn extension_report(name: &str) -> bool {
+/// Extension and theme uploads are numbered, so they are picked up by name pattern.
+pub(super) fn numbered_upload_report(name: &str) -> bool {
     name.strip_prefix("uploadExtension")
+        .or_else(|| name.strip_prefix("uploadTheme"))
         .and_then(|rest| rest.strip_suffix(".json"))
         .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
 }
@@ -81,7 +82,11 @@ fn export(app: &AppHandle, session_log: &str, preview: bool) -> Result<Option<St
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-fn collect(directory: Option<&Path>, session_log: &str, preview: bool) -> Result<Vec<Entry>> {
+pub(super) fn collect(
+    directory: Option<&Path>,
+    session_log: &str,
+    preview: bool,
+) -> Result<Vec<Entry>> {
     if session_log.len() as u64 > MAX_FILE_BYTES {
         return Err("Session log exceeds 8 MiB.".into());
     }
@@ -129,7 +134,7 @@ fn collect(directory: Option<&Path>, session_log: &str, preview: bool) -> Result
                         }
                     };
                     let name = entry.file_name().to_string_lossy().into_owned();
-                    if extension_report(&name) {
+                    if numbered_upload_report(&name) {
                         match read_report(&entry.path(), &name) {
                             Ok(Some(content)) => entries.push((name, content)),
                             Ok(None) => {}
