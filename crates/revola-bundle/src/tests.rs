@@ -189,16 +189,19 @@ fn future_packages_explain_installer_requirements() {
     );
 }
 
-/// An extension file from revola's rvx-pack (tools/rvx.py `pack_extension`): id eq, API
-/// 1.7, modules main (always) and editor (screen), a resident lz bitmap "icon" and a data
-/// asset "table" read on request.
-const REFERENCE_PACKAGE: &str = "525658300100000007000100ffb60e6674000000040000006343d6bc52564d460300000007000100000000000200000000000000380000000000030006000c001200170024000000000000002500000000002a000101310065710045510042616e647300302e312e30005061756c0047504c2d332e302d6f6e6c7900006d61696e00656469746f7200656469746f720008e290ea00000000e0000000240000002400000078820d5c000000000c0100002000000020000000f01540e602010000040100000500000028000000df9b9c4a010002002c01000006000000060000000800000004000000040000000100000001000000000102030405060708090a0b080000000211f0001500000008000000040000000000000000000000010000000000000000000000000000000001020304050000";
+/// An extension file from revola's `rvx.pack_extension` (tools/rvx.py) with hand-built
+/// payloads: id eq, API 1.7, firmware 0x660EB6FF; module main `rvx.module_image` with
+/// `__data_start` 8, `__data_end` 12, `__bss_end` 16, `rv_module_entry` 1 over
+/// `bytes(range(12))` and one relocation at 8; module editor (screen "editor") the same
+/// with `__bss_end` 12 over twelve zero bytes and no relocation; an `always` bitmap "icon"
+/// of forty 0x11 bytes, stored lz; a `never` data asset "table" of `bytes(range(6))`.
+const REFERENCE_PACKAGE: &str = "525658300100000007000100ffb60e6678000000040000004e3bde7552564d460300000007000100000000000200000000000000380000000000030006000c0012001700240000000000000025000000000000002a0001013100010065710045510042616e647300302e312e30005061756c0047504c2d332e302d6f6e6c7900006d61696e00656469746f7200656469746f720008e290ea00000000e4000000240000002400000078820d5c00000000100100002000000020000000f01540e602010000080100000500000028000000df9b9c4a010002003001000006000000060000000800000004000000040000000100000001000000000102030405060708090a0b080000000211f0001500000008000000040000000000000000000000010000000000000000000000000000000001020304050000";
 /// Offsets in REFERENCE_PACKAGE: the header's entry count, the manifest, the catalog,
 /// and the first module payload.
 const ENTRY_COUNT: usize = 20;
 const MANIFEST: usize = 28;
-const CATALOG: usize = MANIFEST + 116;
-const MAIN_PAYLOAD: usize = 0xe0;
+const CATALOG: usize = MANIFEST + 120;
+const MAIN_PAYLOAD: usize = 0xe4;
 
 fn unhex(hex: &str) -> Vec<u8> {
     (0..hex.len() / 2)
@@ -420,6 +423,11 @@ fn extensions_are_validated_and_listed_in_upload_order() {
         file
     };
     assert!(extension::check_package("eq", &with_folder("Presets"), &core()).is_ok());
+    // A module record after main's may carry any preload class.
+    let module = |index: usize, field: usize| MANIFEST + 48 + index * 8 + field;
+    let mut never_module = good.clone();
+    never_module[module(1, 6)] = 2;
+    assert!(extension::check_package("eq", &never_module, &core()).is_ok());
     assert!(extension::check_package("eq", &with_folder("Abcdefghijklmnop"), &core()).is_ok());
     let cases: Vec<(&str, &str, Vec<u8>)> = vec![
         ("eq", "reserved content folder", with_folder("Extensions")),
@@ -456,9 +464,24 @@ fn extensions_are_validated_and_listed_in_upload_order() {
             file[entry(3, 6)] = 1;
             file
         }),
-        ("eq", "module with a preload class", {
+        ("eq", "module entry with a preload class", {
             let mut file = good.clone();
-            file[entry(0, 6)] = 1;
+            file[entry(1, 6)] = 1;
+            file
+        }),
+        ("eq", "main record with a preload class", {
+            let mut file = good.clone();
+            file[module(0, 6)] = 1;
+            file
+        }),
+        ("eq", "module record class 3", {
+            let mut file = good.clone();
+            file[module(1, 6)] = 3;
+            file
+        }),
+        ("eq", "module record reserved byte set", {
+            let mut file = good.clone();
+            file[module(1, 7)] = 1;
             file
         }),
         ("eq", "catalog past the end", edit(ENTRY_COUNT, 4000)),

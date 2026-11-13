@@ -30,7 +30,7 @@ const MANIFEST_VERSION: u32 = 3;
 const MANIFEST_MAX: usize = 1024;
 const MANIFEST_HEADER: usize = 48;
 const MAX_CONTENT: usize = 4;
-const MODULE_RECORD: usize = 6;
+const MODULE_RECORD: usize = 8;
 const SITE_RECORD: usize = 12;
 const MAX_MODULES: usize = 15;
 const MAX_SITES: usize = 8;
@@ -88,7 +88,7 @@ pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<()> {
         return Err(bad("catalog does not fit the file or the manifest"));
     }
     let mut names = BTreeSet::new();
-    // The assets sort by preload class; a module carries the first class.
+    // The assets sort by preload class; a module entry carries the first class.
     let mut previous_preload = 0;
     for index in 0..entries {
         let at = catalog + index * ENTRY;
@@ -208,9 +208,12 @@ fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
         let name = string(half(manifest, record))?;
         let trigger = manifest[record + 2];
         string(half(manifest, record + 4))?;
+        let (preload, reserved) = (manifest[record + 6], manifest[record + 7]);
         if trigger > TRIGGER_MANUAL
+            || preload > PRELOAD_NEVER
+            || reserved != 0
             || !names.insert(name)
-            || (index == 0) != (name == "main" && trigger == 0)
+            || (index == 0) != (name == "main" && trigger == 0 && preload == 0)
         {
             return Err(bad("module list"));
         }
