@@ -3195,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "revola-bundle"
-version = "2026.11.0"
+version = "2026.11.1"
 dependencies = [
  "crc32fast",
  "ed25519-dalek",
@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "revola-cli"
-version = "2026.11.0"
+version = "2026.11.1"
 dependencies = [
  "revola-bundle",
  "revola-device",
@@ -3224,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "revola-device"
-version = "2026.11.0"
+version = "2026.11.1"
 dependencies = [
  "getrandom 0.4.3",
  "rusb",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "revola-installer"
-version = "2026.11.0"
+version = "2026.11.1"
 dependencies = [
  "reqwest",
  "revola-bundle",
