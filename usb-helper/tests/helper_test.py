@@ -86,7 +86,8 @@ int disk_mount_all(void) { mounts++; return fault==11 ? 0 : 1; }
 int disk_unmount_all(void) { return fault==6 ? 0 : 1; }
 bool disk_partinfo(int n, struct partinfo *p) { (void)n; *p=(struct partinfo){394224,1000995848,0x0c}; if(fault==10)p->size++; return true; }
 unsigned fat_get_bytes_per_sector(void) {return fault==9 ? 512 : 4096;}
-bool fat_size(sector_t *s, sector_t *f) {(void)s; *f=fault==8 ? 0 : 1000000; return true;}
+static int sizes;
+bool fat_size(sector_t *s, sector_t *f) {(void)s; sizes++; *f=fault==8 || (fault==21 && sizes>1) ? 0 : 1000000; return true;}
 unsigned fat_get_cluster_size(void) {return 16384;}
 void ata_sleepnow(void) {sleeps++;}
 bool file_exists(const char *p) {return access(p+1,F_OK)==0;}
@@ -126,8 +127,9 @@ static void close_repeatedly(void) {
 }
 int main(int argc,char **argv)
 {
-    assert(argc==5 || argc==6);
-    const char *target=argc==6 ? argv[5] : "/os.bin";
+    assert(argc>=5 && argc<=7);
+    const char *target=argc>=6 ? argv[5] : "/os.bin";
+    const char *second=argc==7 ? argv[6] : NULL;
     unsigned size=strtoul(argv[1],0,10); unsigned overwrite=atoi(argv[2]); bool exists=atoi(argv[3]);fault=atoi(argv[4]);
     if(exists){int f=open("os.bin",O_WRONLY|O_CREAT,0600);assert(write(f,"old",3)==3);close(f);}
     if(overwrite==3 && fault!=14 && fault!=15){ /* fault 17: state.bin refuses to go */
@@ -151,6 +153,10 @@ int main(int argc,char **argv)
     if(fault>=9 && fault<=11){assert(test_result.rc==-303);assert(opens==0);assert(!upload_write_allowed(394224,1));upload_close();return 0;}
     if(overwrite==3 && (fault==0 || fault==8 || fault==14 || fault==15 || fault==17)){removal();return 0;}
     if(fault==8){assert(test_result.rc==-322);assert(opens==0);upload_close();return 0;}
+    if(overwrite==2 && fault==22){ /* NEXT is ignored after an inspection */
+        struct upload_config next;memset(&next,0,sizeof next);next.size=512;next.overwrite=1;strcpy(next.path,"/Revola/a.bin");
+        upload_next(&next);assert(test_result.state==4&&!test_result.rc&&test_result.size==size&&test_storage.start==394224);close_repeatedly();return 0;
+    }
     if(overwrite==2){assert(test_result.state==4);assert(!test_result.rc);assert(opens==0);assert(test_storage.existing_files==(fault==16 ? 3 : 0));assert(test_storage.start==394224);assert(test_storage.end==1001390072);assert(test_storage.free_bytes==1024000000);assert(!upload_write_allowed(394224,1));close_repeatedly();assert(sleeps==1);return 0;}
     if(exists&&!overwrite){assert(test_result.rc==-304);assert(opens==0);original();upload_close();return 0;}
     assert(test_result.state==1);test_result.state=2;upload_start();
@@ -169,6 +175,44 @@ int main(int argc,char **argv)
         if(exists)original();
     }
     while(test_result.state==3){if(exists)original();upload_verify_step();}
+    if(second){
+        assert(test_result.state==4&&!test_result.rc&&mounts==2&&sleeps==1);
+        unsigned size2=size/2+1;
+        struct upload_config next;memset(&next,0,sizeof next);memset(next.tag,7,16);next.size=size2;next.overwrite=1;strcpy(next.path,second);
+        struct sha256 h2;sha256_init(&h2);
+        for(unsigned off=0;off<size2;){unsigned n=MIN(size2-off,65536);pattern(off+5,n);sha256_update(&h2,test_buffer,n);off+=n;}
+        sha256_final(&h2,next.sha256);
+        if(fault==20||fault==21){ /* an existing destination without overwrite, or a full disk */
+            if(fault==20){next.overwrite=0;touch(second+1);}
+            upload_next(&next);assert(test_result.state==4&&test_result.rc==(fault==20 ? -304 : -322));
+            assert(!strcmp(test_result.path,second)&&test_result.size==size2);
+            close_repeatedly();assert(sleeps==2);return 0;
+        }
+        if(fault==19){ /* storage modes and a second attempt after a failure are refused */
+            next.overwrite=2;upload_next(&next);assert(test_result.state==4&&test_result.rc==-302);
+            next.overwrite=1;upload_next(&next);assert(test_result.state==4&&test_result.rc==-302);
+            close_repeatedly();assert(sleeps==2);return 0;
+        }
+        upload_next(&next);
+        assert(test_result.state==1&&!test_result.rc&&mounts==2&&sleeps==1);
+        assert(!test_result.received&&!test_result.written&&!test_result.verified&&!test_result.rejected);
+        assert(!strcmp(test_result.path,second)&&test_result.size==size2);
+        test_result.state=2;upload_start();
+        upload_next(&next);assert(test_result.state==2&&!test_result.rc);
+        for(unsigned off=0;off<size2&&test_result.state==2;){unsigned n=MIN(size2-off,65536);pattern(off+5,n);test_result.received+=n;upload_write(n);off+=n;}
+        while(test_result.state==3)upload_verify_step();
+        assert(test_result.state==4&&!test_result.rc&&mounts==3&&sleeps==2);
+        assert(!memcmp(test_result.source_sha256,next.sha256,32)&&!memcmp(test_result.disk_sha256,next.sha256,32));
+        close_repeatedly();assert(sleeps==3);
+        uint8_t readback[65536];
+        int f=open(target+1,O_RDONLY);assert(f>=0);assert(ffilesize(f)==size);
+        for(unsigned off=0;off<size;){unsigned n=MIN(size-off,65536);assert(read(f,readback,n)==n);pattern(off,n);assert(!memcmp(test_buffer,readback,n));off+=n;}
+        close(f);
+        f=open(second+1,O_RDONLY);assert(f>=0);assert(ffilesize(f)==size2);
+        for(unsigned off=0;off<size2;){unsigned n=MIN(size2-off,65536);assert(read(f,readback,n)==n);pattern(off+5,n);assert(!memcmp(test_buffer,readback,n));off+=n;}
+        close(f);
+        return 0;
+    }
     close_repeatedly();
     assert(test_result.state==4);
     if(fault==18){assert(test_result.rc==-317);assert(present("os.bin"));return 0;}
@@ -296,7 +340,9 @@ extern struct storage_result test_storage;
                 self.sha.sha256_final(ctypes.byref(s), out)
                 self.assertEqual(out.raw, hashlib.sha256(data).digest(), (size, chunk))
 
-    def run_file(self, size, overwrite, exists, fault, path="/os.bin", setup=None):
+    def run_file(
+        self, size, overwrite, exists, fault, path="/os.bin", setup=None, second=None
+    ):
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
             if setup:
                 setup(Path(directory))
@@ -308,7 +354,8 @@ extern struct storage_result test_storage;
                     str(int(exists)),
                     str(fault),
                     path,
-                ],
+                ]
+                + ([second] if second else []),
                 cwd=directory,
                 check=True,
             )
@@ -378,6 +425,27 @@ extern struct storage_result test_storage;
             for overwrite, exists in [(False, False), (True, True)]:
                 with self.subTest(size=size, overwrite=overwrite, exists=exists):
                     self.run_file(size, overwrite, exists, 0)
+
+    def test_next_file_reuses_the_mounted_volume(self):
+        for size in [0, 65537, 13 * 1024 * 1024 + 17]:
+            with self.subTest(size=size):
+                self.run_file(
+                    size,
+                    True,
+                    False,
+                    0,
+                    "/Revola/Firmware/revola.bin",
+                    second="/Revola/Extensions/eq/main.rvx",
+                )
+
+    def test_next_file_refuses_storage_modes_and_failed_sessions(self):
+        self.run_file(65537, True, False, 19, second="/Revola/Extensions/eq/main.rvx")
+        self.run_file(12000000, 2, False, 22)
+
+    def test_next_file_reports_an_existing_destination_and_a_full_disk(self):
+        for fault in [20, 21]:
+            with self.subTest(fault=fault):
+                self.run_file(65537, True, False, fault, second="/b.bin")
 
     def test_destination_readback_failure_is_reported(self):
         self.run_file(70000, 1, False, 18)

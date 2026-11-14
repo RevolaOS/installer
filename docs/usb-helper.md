@@ -1,6 +1,20 @@
 # USB upload helper
 
-The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d` and does one of three jobs before returning to DFU: it writes one file to the data partition under a staging name, reads it back, renames it into place and reads it back once more under its final name, the one the bootloader opens; it inspects the data partition; or it deletes the RevolaOS files.
+The helper is a Rockbox-based image sent over BootROM DFU. It enumerates as WinUSB device `f055:180d` and does one of three jobs before returning to DFU: it writes files to the data partition; it inspects the data partition; or it deletes the RevolaOS files.
+
+## Upload
+
+The image config names the first file. Each file is written under a staging name, read back, renamed into place and read back once more under its final name, the one the bootloader opens. The volume stays mounted afterwards, and the host either queues another file or ends the session. All requests are class requests on interface 0; the OUT requests carry the session nonce first and are refused without it.
+
+| Request | | Payload | Accepted in state |
+|---|---|---|---|
+| `0x52` STATUS | IN | 320-byte result: state, rc, counters, both hashes, path | any |
+| `0x53` START | OUT | nonce | 1 READY |
+| `0x59` NEXT | OUT | nonce, then the file config: size, mode (0 create, 1 replace), SHA-256, path | 4 COMPLETE with rc 0 |
+| `0x54` ACKNOWLEDGE | OUT | nonce | 4 COMPLETE; unmounts and returns to DFU |
+| `0x55` CANCEL | OUT | nonce | any until ACKNOWLEDGE; fails the session and returns to DFU |
+
+States: 1 ready, 2 receiving, 3 verifying, 4 complete. NEXT resets the counters and hashes, checks the path, free space and (for mode 0) that the destination is absent, then reports READY; a failed check leaves state 4 with the error code and no further file is accepted. The host reads STATUS at COMPLETE for every file; the result of the last file is also read over DFU after the return. The helper waits 120 s between files and 30 s for progress within one.
 
 ## Removal
 
@@ -37,6 +51,6 @@ python3 -m unittest discover -s usb-helper/tests -p '*_test.py'
 | File | |
 |---|---|
 | `build/usb-helper/upload.dfu` | the IMG1 image |
-| `build/usb-helper/manifest.json` | schema 3: BootROM hash, size, SHA-256, offsets of the nonce, config and cold-init slots, and the `storage_inspection` and `file_removal` capabilities |
+| `build/usb-helper/manifest.json` | schema 3: BootROM hash, size, SHA-256, offsets of the nonce, config and cold-init slots, and the `storage_inspection`, `file_removal` and `batch_upload` capabilities |
 
 Both go into a bundle as the `usb_helper` component. `usb-helper/tests/fixtures/` holds one built image for the Rust and Python tests; it contains Rockbox and helper code only.
