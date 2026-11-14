@@ -123,7 +123,7 @@ fn run(
         &directory.join("inputs.json"),
         &serde_json::json!({"ipsw": ipsw.sha256, "bundle": bundle.digest()}),
     )?;
-    let mut job = Job::new(state, channel, directory)?;
+    let mut job = Job::new(state, channel, directory, "install")?;
     job.log(format!(
         "Installer {}; package {} ({}); IPSW {}",
         env!("CARGO_PKG_VERSION"),
@@ -155,14 +155,19 @@ fn run(
         let mut session = checked.session;
         job.stage("checkBootloader", "Checking installed bootloader")?;
         let bootloader = session.inspect_bootloader(|p| {
-            job.progress("Verifying installed bootloader", p.completed, p.total)
+            job.progress_in(
+                "Verifying installed bootloader",
+                (0.0, 1.0),
+                p.completed,
+                p.total,
+            )
         })?;
         job.save_json("bootloader.json", &bootloader)?;
         job.log(format!("Detected bootloader: apple={}; code_sha256={}; code_bytes={}; entrypoint={:#x}; NOR bytes inspected={}",
             bootloader.apple, bootloader.fingerprint.sha256, bootloader.fingerprint.bytes,
             bootloader.fingerprint.entrypoint, bootloader.read_bytes));
         let action = assembly::BootloaderAction::for_installed(&bootloader, &expected_bootloader);
-        job.plan(action)?;
+        job.plan(action, firmware::cached(&data))?;
         session = transfer::inspect_storage(session, &helper, &bundle, &mut job)?;
         let nor = firmware::backup(&mut session, identity, action, &mut job)?;
         let artifacts = firmware::assemble(

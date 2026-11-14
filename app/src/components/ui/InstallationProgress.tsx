@@ -7,22 +7,15 @@ interface IInstallationProgressProps {
   label: string;
   value: number | null;
   complete: boolean;
-  stage: string;
 }
 
-const InstallationProgress: React.FC<IInstallationProgressProps> = ({
-  label,
-  value,
-  complete,
-  stage,
-}) => {
+const InstallationProgress: React.FC<IInstallationProgressProps> = ({ label, value, complete }) => {
   const reducedMotion = useReducedMotion();
 
   return (
     <Progress.Root value={complete ? 100 : value} aria-label={label}>
       <Progress.Track className="relative h-[18px] overflow-hidden rounded-full border border-[#9babb6] bg-[#dbe0e3] shadow-[inset_0_1px_3px_#36495826,0_1px_0_#ffffff]">
         <motion.div
-          key={stage}
           className="absolute inset-y-0 left-0 overflow-hidden rounded-full bg-[#6baddb]"
           initial={false}
           animate={{ width: `${value ?? 100}%` }}

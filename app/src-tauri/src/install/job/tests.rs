@@ -4,7 +4,7 @@ use super::*;
 fn job(state: &InstallState) -> Job<'_> {
     let device = format!("revola-job-test-{:?}", std::thread::current().id());
     let directory = backup_directory(&std::env::temp_dir(), device.as_bytes()).unwrap();
-    Job::new(state, Channel::new(|_| Ok(())), directory).unwrap()
+    Job::new(state, Channel::new(|_| Ok(())), directory, "install").unwrap()
 }
 
 #[test]
@@ -110,6 +110,7 @@ fn nor_snapshots_are_reused_verified_and_separated_by_device_and_content() {
             &state,
             Channel::new(|_| Ok(())),
             backup_directory(&root, device).unwrap(),
+            "install",
         )
         .unwrap()
     };
@@ -189,6 +190,7 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
             &state,
             Channel::new(|_| Ok(())),
             backup_directory(&root, device).unwrap(),
+            "install",
         )
         .unwrap();
         artifacts.firmware = firmware.to_vec();
@@ -221,7 +223,7 @@ fn update_plan_and_completion_are_preserved_in_support_logs() {
     ] {
         let mut job = job(&state);
         let directory = job.directory.clone();
-        job.plan(action).unwrap();
+        job.plan(action, (false, false)).unwrap();
         let outcome = if action == BootloaderAction::Keep {
             InstallOutcome::FilesUpdated
         } else {
