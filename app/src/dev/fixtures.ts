@@ -52,7 +52,7 @@ export const mockPackage: PackageInfo = {
   ],
   themes: ["Flat"],
   games: ["2048"],
-  apps: [],
+  apps: ["Dice"],
 };
 
 export const mockUpdateNotes = [
