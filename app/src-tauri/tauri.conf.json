@@ -62,7 +62,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ5QkJDNDMzMDlDMDA5RjIKUldUeUNjQUpNOFM3U2FJR1JFQnJLamtVRW55QU1hbzFWZWFoSHFNUldEcWg0a0xMQTYwWEpESmUK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY0OUE0MzdBQjVCRTI1QjcKUldTM0piNjFla09hOUNWOVo1ZW1iclNDc0llM2RHRU4zZ0pSYUZGc3BqeHVXYzBvS2pNZWpVdVQK",
       "windows": {
         "installMode": "passive"
       }

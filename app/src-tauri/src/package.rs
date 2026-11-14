@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 
-const RELEASE_PUBLIC_KEY: &str = "367231334963307a92e328fa271a59c32a4eed0167fb695cf1f0754948292379";
+const RELEASE_PUBLIC_KEY: &str = "a0e882c64665f74db8315c701bf5ebea36d30c37e8d07d6327b3a8d2a84a5826";
 
 #[derive(Default)]
 pub struct PackageState(pub Mutex<Option<Arc<VerifiedBundle>>>);
