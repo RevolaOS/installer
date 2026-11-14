@@ -13,9 +13,10 @@ A bundle is a directory or ZIP with `manifest.json`, a detached ed25519 signatur
 | `components` | `usb_helper`, `firmware`, `companion`, `nor`, each with a `format` and named files; a release bundle has all four, and its `nor` carries the `uninstaller` as well as the `image` and `descriptor` |
 | `extensions` | id to `{format, version, api, file}`; `file` is the SHA-256 of the extension's one `.rvx` |
 | `themes` | id to `{format, version, file}`; `format` is `revola-theme-v1`, `version` the theme's own string, `file` the SHA-256 of the `.rvt` |
+| `games`, `apps` | id to `{format, version, files}`; `format` is `revola-eapp-v1`, `version` the package's SemVer, `files` the folder's file names to SHA-256, `Manifest.plist` included |
 | `assets` | hash to size |
 
-`extensions` and `themes` are optional maps; either needs `core`.
+`extensions`, `themes`, `games` and `apps` are optional maps; any of them needs `core`.
 
 `core.firmware_build_id` is the first eight hex digits of the pinned decrypted OSOS SHA-256 (`0x660eb6ff` for 2.0.5) and must match `firmware/apple.json`.
 
@@ -47,6 +48,20 @@ Theme ids are `[a-z0-9][a-z0-9_-]{0,30}`, the file's stem; `classic` is the buil
 The pack bodies are the iPod's to check.
 
 The installer uploads each theme to `/Revola/Themes/<id>.rvt` after the extensions; the helper creates the folder. Uninstalling removes the whole `/Revola` tree, themes copied there by hand included, as it does for extensions.
+
+## Package checks
+
+A game or app is the folder `eapp-pack` writes (revola `sdk/app/eapp_package.py`). Its id is `[a-z0-9][a-z0-9_-]{0,31}`, the folder name. The folder holds 2 to 16 files; names are printable ASCII without `/ \ : * ? " < > |`, at most 64 bytes, distinct ignoring case. `Manifest.plist` is checked as Apple's game host reads it:
+
+| Part | Check |
+|---|---|
+| identity | XML property list; `Name` non-empty without control characters; `GUID` and `UserDataPath` equal the id; `Version` a string; `HeapSize` a positive integer |
+| `Files` | lists every other file of the folder once, each with its byte size, and nothing else |
+| `Platforms` | one entry whose `ExecutablePath` and `LaunchingArtwork` are listed files |
+
+The image itself is not opened; `eapp-pack` checked it when the package was built.
+
+The installer uploads each file to `/Revola/Games/<id>/<name>` or `/Revola/Apps/<id>/<name>` after the themes, games first. Files of a package the bundle no longer lists stay on disk; the Homebrew extension reads only what the manifest names.
 
 ## Building a bundle
 

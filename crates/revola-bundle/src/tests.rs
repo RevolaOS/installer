@@ -573,6 +573,7 @@ fn themes_are_validated_and_listed_after_the_extensions() {
         ]
     );
     assert_eq!(bundle.theme_bytes(), good.len());
+    assert_eq!(bundle.names().themes, ["Flat"]);
     let (manifest, assets) = with_theme(&f, "flat", &good);
     write_signed(&f, &manifest, &assets).unwrap();
     assert!(f.load().is_ok());
@@ -741,4 +742,256 @@ fn assets_cannot_be_symlinks() {
     fs::rename(&path, &moved).unwrap();
     std::os::unix::fs::symlink(moved, path).unwrap();
     assert!(f.load().is_err());
+}
+
+/// A package folder as `eapp-pack` writes it: the plist names every other file with
+/// its size, and one platform entry points at the image and the artwork.
+fn folder(id: &str, name: &str, files: &[(&str, &[u8])]) -> BTreeMap<String, Vec<u8>> {
+    let listed: String = files
+        .iter()
+        .map(|(path, bytes)| {
+            format!(
+                "<dict><key>Path</key><string>{path}</string><key>Size</key><integer>{}</integer>\
+                 <key>DRM</key><false/><key>Verify</key><false/></dict>",
+                bytes.len()
+            )
+        })
+        .collect();
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Name</key><string>{name}</string>
+<key>BuildIdentifier</key><string>{id}</string>
+<key>GUID</key><string>{id}</string>
+<key>Version</key><string>0.2.0</string>
+<key>HeapSize</key><integer>256</integer>
+<key>UserDataPath</key><string>{id}</string>
+<key>Files</key><array>{listed}</array>
+<key>Platforms</key><array><dict>
+<key>PlatformID</key><integer>3</integer><key>PlatformVersion</key><integer>1</integer>
+<key>BuildID</key><integer>1</integer>
+<key>ExecutablePath</key><string>{id}.eapp</string>
+<key>LaunchingArtwork</key><string>{id}.raw.lcd5</string>
+</dict></array>
+</dict></plist>
+"#
+    );
+    files
+        .iter()
+        .map(|(path, bytes)| ((*path).to_owned(), bytes.to_vec()))
+        .chain([(eapp::MANIFEST.to_owned(), plist.into_bytes())])
+        .collect()
+}
+
+fn game(id: &str, name: &str) -> BTreeMap<String, Vec<u8>> {
+    folder(
+        id,
+        name,
+        &[
+            (&format!("{id}.eapp"), b"image"),
+            (&format!("{id}.raw.lcd5"), b"artwork bytes"),
+        ],
+    )
+}
+
+fn check_folder(id: &str, folder: &BTreeMap<String, Vec<u8>>) -> Result<String> {
+    let files = folder
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    eapp::check_package(id, &files)
+}
+
+/// The fixture with one game and one app, no extension or theme.
+fn with_packages(
+    f: &Fixture,
+    game: (&str, &BTreeMap<String, Vec<u8>>),
+    app: Option<(&str, &BTreeMap<String, Vec<u8>>)>,
+) -> (Manifest, BTreeMap<String, Vec<u8>>) {
+    let mut manifest: Manifest =
+        serde_json::from_slice(&fs::read(f.dir.path().join(MANIFEST_FILE)).unwrap()).unwrap();
+    manifest.extensions.clear();
+    manifest.core = Some(core());
+    let mut assets = BTreeMap::new();
+    let mut entry = |folder: &BTreeMap<String, Vec<u8>>| Package {
+        format: EAPP_FORMAT.into(),
+        version: "0.2.0".into(),
+        files: folder
+            .iter()
+            .map(|(name, bytes)| {
+                let hash = sha256(bytes);
+                manifest
+                    .assets
+                    .insert(hash.clone(), Asset { bytes: bytes.len() });
+                assets.insert(hash.clone(), bytes.clone());
+                (name.clone(), hash)
+            })
+            .collect(),
+    };
+    let game_entry = entry(game.1);
+    let app_entry = app.map(|(_, folder)| entry(folder));
+    manifest.games.insert(game.0.to_owned(), game_entry);
+    if let (Some((id, _)), Some(package)) = (app, app_entry) {
+        manifest.apps.insert(id.to_owned(), package);
+    }
+    let referenced: std::collections::BTreeSet<String> = manifest
+        .components
+        .values()
+        .flat_map(|c| c.files.values())
+        .chain(
+            manifest
+                .games
+                .values()
+                .chain(manifest.apps.values())
+                .flat_map(|p| p.files.values()),
+        )
+        .cloned()
+        .collect();
+    manifest.assets.retain(|hash, _| referenced.contains(hash));
+    (manifest, assets)
+}
+
+#[test]
+fn packages_are_validated_and_listed_after_the_themes() {
+    let f = Fixture::new();
+    let good = game("2048", "2048");
+    assert_eq!(check_folder("2048", &good).unwrap(), "2048");
+    let notes = folder(
+        "notes",
+        "Notes",
+        &[("notes.eapp", b"i"), ("notes.raw.lcd5", b"a")],
+    );
+    let (mut manifest, mut assets) = with_extension(&f, "eq", &reference(), 1);
+    let (packaged, package_assets) = with_packages(&f, ("2048", &good), Some(("notes", &notes)));
+    manifest.games = packaged.games;
+    manifest.apps = packaged.apps;
+    manifest.assets.extend(packaged.assets);
+    assets.extend(package_assets);
+    write_signed(&f, &manifest, &assets).unwrap();
+    let bundle = f.load().unwrap();
+    let files: Vec<_> = bundle
+        .extension_files()
+        .into_iter()
+        .chain(bundle.package_files())
+        .map(|file| (file.id.to_owned(), file.destination))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("eq".to_owned(), "/Revola/Extensions/eq.rvx".to_owned()),
+            ("2048".to_owned(), "/Revola/Games/2048/2048.eapp".to_owned()),
+            (
+                "2048".to_owned(),
+                "/Revola/Games/2048/2048.raw.lcd5".to_owned()
+            ),
+            (
+                "2048".to_owned(),
+                "/Revola/Games/2048/Manifest.plist".to_owned()
+            ),
+            (
+                "notes".to_owned(),
+                "/Revola/Apps/notes/Manifest.plist".to_owned()
+            ),
+            (
+                "notes".to_owned(),
+                "/Revola/Apps/notes/notes.eapp".to_owned()
+            ),
+            (
+                "notes".to_owned(),
+                "/Revola/Apps/notes/notes.raw.lcd5".to_owned()
+            ),
+        ]
+    );
+    let bytes: usize = good.values().chain(notes.values()).map(Vec::len).sum();
+    assert_eq!(bundle.package_bytes(), bytes);
+    assert_eq!(bundle.names().extensions, ["EQ"]);
+    assert_eq!(bundle.names().games, ["2048"]);
+    assert_eq!(bundle.names().apps, ["Notes"]);
+
+    // Manifest-level rejections: core profile, id, format, version, file names, asset.
+    let (mut manifest, _) = with_packages(&f, ("2048", &good), None);
+    manifest.core = None;
+    assert!(manifest.validate("0.2.0").is_err());
+    for id in ["Flat", "-2048", "", "a/b"] {
+        let (manifest, _) = with_packages(&f, (id, &good), None);
+        assert!(manifest.validate("0.2.0").is_err(), "{id:?}");
+    }
+    for (format, version) in [("eapp", "0.2.0"), (EAPP_FORMAT, "0.2")] {
+        let (mut manifest, _) = with_packages(&f, ("2048", &good), None);
+        let package = manifest.games.get_mut("2048").unwrap();
+        package.format = format.into();
+        package.version = version.into();
+        assert!(manifest.validate("0.2.0").is_err(), "{format} {version:?}");
+    }
+    for (name, label) in [
+        ("..", "parent"),
+        ("sub/file", "path"),
+        ("a:b", "colon"),
+        ("MANIFEST.PLIST", "case twin"),
+        (&"a".repeat(65), "long"),
+    ] {
+        let (mut manifest, _) = with_packages(&f, ("2048", &good), None);
+        let package = manifest.games.get_mut("2048").unwrap();
+        let hash = package.files["2048.eapp"].clone();
+        package.files.insert(name.to_owned(), hash);
+        assert!(manifest.validate("0.2.0").is_err(), "{label}");
+    }
+    let (mut manifest, _) = with_packages(&f, ("2048", &good), None);
+    manifest
+        .games
+        .get_mut("2048")
+        .unwrap()
+        .files
+        .remove("Manifest.plist");
+    assert!(manifest.validate("0.2.0").is_err());
+    let (mut manifest, _) = with_packages(&f, ("2048", &good), None);
+    let package = manifest.games.get_mut("2048").unwrap();
+    *package.files.get_mut("2048.eapp").unwrap() = "0".repeat(64);
+    assert!(manifest.validate("0.2.0").is_err());
+
+    // Folder-level rejections happen before signing and at load: the host's manifest.
+    let mut wrong_id = good.clone();
+    wrong_id.insert(
+        "Manifest.plist".into(),
+        game("4096", "2048")["Manifest.plist"].clone(),
+    );
+    let mut wrong_size = good.clone();
+    wrong_size.insert("2048.eapp".into(), b"longer image".to_vec());
+    let mut unlisted = good.clone();
+    unlisted.insert("extra.bin".into(), b"x".to_vec());
+    let mut missing = good.clone();
+    missing.remove("2048.raw.lcd5");
+    let mut no_manifest = good.clone();
+    no_manifest.remove("Manifest.plist");
+    let mut not_xml = good.clone();
+    not_xml.insert("Manifest.plist".into(), b"bplist00".to_vec());
+    let no_artwork = folder("2048", "2048", &[("2048.eapp", b"image")]);
+    let empty_name = game("2048", "");
+    let mut manifest_listed = good.clone();
+    let plist = String::from_utf8(good["Manifest.plist"].clone())
+        .unwrap()
+        .replace(
+            "<key>Files</key><array>",
+            "<key>Files</key><array><dict><key>Path</key><string>Manifest.plist</string>\
+         <key>Size</key><integer>1</integer></dict>",
+        );
+    manifest_listed.insert("Manifest.plist".into(), plist.into_bytes());
+    for (label, folder) in [
+        ("GUID differs from the folder", wrong_id),
+        ("size differs", wrong_size),
+        ("file not listed", unlisted),
+        ("listed file missing", missing),
+        ("no manifest", no_manifest),
+        ("binary plist", not_xml),
+        ("artwork not listed", no_artwork),
+        ("empty name", empty_name),
+        ("manifest lists itself", manifest_listed),
+    ] {
+        assert!(check_folder("2048", &folder).is_err(), "{label}");
+        let (manifest, assets) = with_packages(&f, ("2048", &folder), None);
+        if manifest.validate("0.2.0").is_ok() {
+            assert!(write_signed(&f, &manifest, &assets).is_err(), "{label}");
+        }
+    }
 }

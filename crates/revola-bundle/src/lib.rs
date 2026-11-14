@@ -4,6 +4,7 @@
 mod archive;
 pub mod assembly;
 mod distribution;
+pub mod eapp;
 pub mod export;
 pub mod extension;
 mod le;
@@ -34,6 +35,9 @@ pub const EXTENSIONS_ROOT: &str = "/Revola/Extensions";
 pub const EXTENSION_FORMAT: &str = "revola-extension-v1";
 pub const THEMES_ROOT: &str = "/Revola/Themes";
 pub const THEME_FORMAT: &str = "revola-theme-v1";
+pub const GAMES_ROOT: &str = "/Revola/Games";
+pub const APPS_ROOT: &str = "/Revola/Apps";
+pub const EAPP_FORMAT: &str = "revola-eapp-v1";
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
 #[derive(Debug, thiserror::Error)]
@@ -111,6 +115,17 @@ pub struct Theme {
     pub file: String,
 }
 
+/// One eApp package folder, installed as `/Revola/Games/<id>/` or `/Revola/Apps/<id>/`
+/// for the Homebrew extension.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Package {
+    pub format: String,
+    pub version: String,
+    /// File name inside the folder to SHA-256, `Manifest.plist` included.
+    pub files: BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -126,6 +141,10 @@ pub struct Manifest {
     pub extensions: BTreeMap<String, Extension>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub themes: BTreeMap<String, Theme>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub games: BTreeMap<String, Package>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub apps: BTreeMap<String, Package>,
     pub assets: BTreeMap<String, Asset>,
 }
 
@@ -134,6 +153,15 @@ pub struct DeviceFile<'a> {
     pub id: &'a str,
     pub destination: String,
     pub bytes: &'a [u8],
+}
+
+/// Display names read from the packaged files while they are checked, by id.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Names {
+    pub extensions: Vec<String>,
+    pub themes: Vec<String>,
+    pub games: Vec<String>,
+    pub apps: Vec<String>,
 }
 
 impl Manifest {
@@ -209,8 +237,15 @@ impl Manifest {
                 "Release bundle requires the bootloader uninstaller",
             ));
         }
-        if (!self.extensions.is_empty() || !self.themes.is_empty()) && self.core.is_none() {
-            return Err(invalid("Extensions and themes require the core profile"));
+        if self.core.is_none()
+            && (!self.extensions.is_empty()
+                || !self.themes.is_empty()
+                || !self.games.is_empty()
+                || !self.apps.is_empty())
+        {
+            return Err(invalid(
+                "Extensions, themes and packages require the core profile",
+            ));
         }
         if let Some(core) = &self.core {
             let pinned = &revola_device::firmware::current().inputs["osos.bin"].sha256;
@@ -247,6 +282,35 @@ impl Manifest {
                 return Err(invalid("Invalid theme asset reference"));
             }
             referenced.insert(&theme.file);
+        }
+        for (kind, packages) in [("game", &self.games), ("app", &self.apps)] {
+            for (id, package) in packages {
+                // FAT32 is case-insensitive: two names that differ only in case are one file.
+                let distinct: BTreeSet<String> = package
+                    .files
+                    .keys()
+                    .map(|name| name.to_ascii_lowercase())
+                    .collect();
+                if !valid_package_id(id)
+                    || package.format != EAPP_FORMAT
+                    || Version::parse(&package.version).is_err()
+                    || !(2..=eapp::MAX_FILES).contains(&package.files.len())
+                    || distinct.len() != package.files.len()
+                    || !package.files.contains_key(eapp::MANIFEST)
+                    || package
+                        .files
+                        .keys()
+                        .any(|name| !eapp::valid_file_name(name))
+                {
+                    return Err(invalid(format!("Invalid {kind} package: {id}")));
+                }
+                for hash in package.files.values() {
+                    if !self.assets.contains_key(hash) {
+                        return Err(invalid("Invalid package asset reference"));
+                    }
+                    referenced.insert(hash);
+                }
+            }
         }
         let mut total = 0usize;
         for (hash, asset) in &self.assets {
@@ -287,6 +351,7 @@ pub struct VerifiedBundle {
     manifest: Manifest,
     digest: String,
     assets: BTreeMap<String, Vec<u8>>,
+    names: Names,
 }
 
 impl VerifiedBundle {
@@ -299,30 +364,58 @@ impl VerifiedBundle {
             manifest,
             digest: sha256(&raw),
             assets,
+            names: Names::default(),
         }
         .check_helper()?
         .check_extensions()?
-        .check_themes()
+        .check_themes()?
+        .check_packages()
     }
 
     /// Every extension file must load on this bundle's core: the checks of the core's loader.
-    fn check_extensions(self) -> Result<Self> {
+    fn check_extensions(mut self) -> Result<Self> {
         if let Some(core) = &self.manifest.core {
             for (id, ext) in &self.manifest.extensions {
-                extension::check_package(id, &self.assets[&ext.file], core)?;
+                let name = extension::check_package(id, &self.assets[&ext.file], core)?;
+                self.names.extensions.push(name);
             }
         }
         Ok(self)
     }
 
     /// Every theme file must open on the iPod: the checks of the Appearance extension's reader.
-    fn check_themes(self) -> Result<Self> {
+    fn check_themes(mut self) -> Result<Self> {
         if let Some(core) = &self.manifest.core {
             for (id, theme) in &self.manifest.themes {
-                theme::check_theme(id, &self.assets[&theme.file], core)?;
+                let name = theme::check_theme(id, &self.assets[&theme.file], core)?;
+                self.names.themes.push(name);
             }
         }
         Ok(self)
+    }
+
+    /// Every package folder must be one Apple's game host opens: its manifest names
+    /// the folder's files.
+    fn check_packages(mut self) -> Result<Self> {
+        for (packages, names) in [
+            (&self.manifest.games, &mut self.names.games),
+            (&self.manifest.apps, &mut self.names.apps),
+        ] {
+            for (id, package) in packages {
+                let files = package
+                    .files
+                    .iter()
+                    .map(|(name, hash)| (name.as_str(), self.assets[hash].as_slice()))
+                    .collect();
+                names.push(eapp::check_package(id, &files)?);
+            }
+        }
+        Ok(self)
+    }
+
+    /// The display names of the packaged extensions, themes, games and apps.
+    pub fn names(&self) -> &Names {
+        &self.names
     }
 
     /// Extension files in upload order, by id.
@@ -357,6 +450,30 @@ impl VerifiedBundle {
 
     pub fn theme_bytes(&self) -> usize {
         self.theme_files().iter().map(|f| f.bytes.len()).sum()
+    }
+
+    /// Package files in upload order: the games by id, then the apps, each folder's
+    /// files by name; they follow the themes.
+    pub fn package_files(&self) -> Vec<DeviceFile<'_>> {
+        [
+            (GAMES_ROOT, &self.manifest.games),
+            (APPS_ROOT, &self.manifest.apps),
+        ]
+        .into_iter()
+        .flat_map(|(root, packages)| {
+            packages.iter().flat_map(move |(id, package)| {
+                package.files.iter().map(move |(name, hash)| DeviceFile {
+                    id,
+                    destination: format!("{root}/{id}/{name}"),
+                    bytes: &self.assets[hash],
+                })
+            })
+        })
+        .collect()
+    }
+
+    pub fn package_bytes(&self) -> usize {
+        self.package_files().iter().map(|f| f.bytes.len()).sum()
     }
 
     fn check_helper(self) -> Result<Self> {
@@ -425,10 +542,12 @@ pub fn sign_directory(
         manifest,
         digest: sha256(&raw),
         assets,
+        names: Names::default(),
     }
     .check_helper()?
     .check_extensions()?
-    .check_themes()?;
+    .check_themes()?
+    .check_packages()?;
     let key = SigningKey::from_bytes(&decode_hex::<32>(secret_hex.trim())?);
     write_new(&directory.join(SIGNATURE_FILE), &key.sign(&raw).to_bytes())?;
     Ok(hex(&key.verifying_key().to_bytes()))
@@ -498,6 +617,17 @@ fn valid_extension_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 32
         && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+}
+
+/// A package id, the folder name under `/Revola/Games` or `/Revola/Apps`:
+/// `[a-z0-9][a-z0-9_-]{0,31}`.
+fn valid_package_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.as_bytes()[0].is_ascii_alphanumeric()
         && value
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')

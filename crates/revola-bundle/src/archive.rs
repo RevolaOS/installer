@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::{
-    asset_filename, authenticate, check_asset, invalid, sha256, Manifest, Result, TrustedKey,
-    VerifiedBundle, MANIFEST_FILE, MAX_MANIFEST_BYTES, SIGNATURE_FILE,
+    asset_filename, authenticate, check_asset, invalid, sha256, Manifest, Names, Result,
+    TrustedKey, VerifiedBundle, MANIFEST_FILE, MAX_MANIFEST_BYTES, SIGNATURE_FILE,
 };
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 use zip::ZipArchive;
@@ -38,9 +38,12 @@ impl VerifiedBundle {
             manifest,
             digest: sha256(&raw),
             assets,
+            names: Names::default(),
         }
         .check_helper()?
-        .check_extensions()
+        .check_extensions()?
+        .check_themes()?
+        .check_packages()
     }
 }
 

@@ -74,8 +74,9 @@ fn header_crc(header: &[u8]) -> u32 {
     crc.finalize()
 }
 
-/// Check one theme file against its map key and the bundle's catalog fingerprint.
-pub(crate) fn check_theme(id: &str, file: &[u8], core: &Core) -> Result<()> {
+/// Check one theme file against its map key and the bundle's catalog fingerprint;
+/// returns the header's name.
+pub(crate) fn check_theme(id: &str, file: &[u8], core: &Core) -> Result<String> {
     let bad = |what: &str| invalid(format!("{id}.rvt: {what}"));
     if file.len() < HEADER || word(file, MAGIC) as u32 != RVT_MAGIC {
         return Err(bad("not an rvt file"));
@@ -124,5 +125,5 @@ pub(crate) fn check_theme(id: &str, file: &[u8], core: &Core) -> Result<()> {
     if name.is_empty() || name.chars().any(|c| c < ' ' || c == '\x7f') {
         return Err(bad("name is empty or has control characters"));
     }
-    Ok(())
+    Ok(name.to_owned())
 }

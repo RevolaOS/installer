@@ -2,7 +2,7 @@
 
 use crate::{
     asset_filename, authenticate, check_asset, invalid, sha256, valid_hash, valid_target_name,
-    write_new, Result, TrustedKey, VerifiedBundle, MANIFEST_FILE, MAX_MANIFEST_BYTES,
+    write_new, Names, Result, TrustedKey, VerifiedBundle, MANIFEST_FILE, MAX_MANIFEST_BYTES,
     SIGNATURE_FILE,
 };
 use reqwest::{blocking::Client, redirect::Policy, Url};
@@ -149,9 +149,12 @@ fn fetch_with(
         manifest,
         digest: digest.clone(),
         assets,
+        names: Names::default(),
     }
     .check_helper()?
-    .check_extensions()?;
+    .check_extensions()?
+    .check_themes()?
+    .check_packages()?;
     match fs::rename(staging.path(), &directory) {
         Ok(()) => Ok((directory, bundle)),
         Err(_) if directory.try_exists()? => {

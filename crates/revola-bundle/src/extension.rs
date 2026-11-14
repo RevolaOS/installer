@@ -61,8 +61,9 @@ pub fn firmware_build_id(osos_sha256: &str) -> Result<u32> {
         .ok_or_else(|| invalid("Invalid OSOS fingerprint"))
 }
 
-/// Check one extension file against the bundle's core and its package id.
-pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<()> {
+/// Check one extension file against the bundle's core and its package id; returns the
+/// manifest's name.
+pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<String> {
     let bad = |what: &str| invalid(format!("{id}.rvx: {what}"));
     if file.len() < HEADER
         || word(file, 0) as u32 != RVX_MAGIC
@@ -80,7 +81,7 @@ pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<()> {
     if manifest_bytes > MANIFEST_MAX || file.len() < HEADER + manifest_bytes {
         return Err(bad("manifest size"));
     }
-    let modules = check_manifest(id, &file[HEADER..HEADER + manifest_bytes], core)?;
+    let (modules, name) = check_manifest(id, &file[HEADER..HEADER + manifest_bytes], core)?;
     let entries = word(file, 20);
     let catalog = HEADER + manifest_bytes.div_ceil(4) * 4;
     let payloads = catalog + entries * ENTRY;
@@ -121,7 +122,7 @@ pub(crate) fn check_package(id: &str, file: &[u8], core: &Core) -> Result<()> {
                 .map_err(|what| bad(&format!("module {index}: {what}")))?;
         }
     }
-    Ok(())
+    Ok(name)
 }
 
 /// A module payload: struct rvx_module, text and data, relocations.
@@ -148,8 +149,9 @@ fn check_module(payload: &[u8], codec: u8) -> std::result::Result<(), &'static s
     Ok(())
 }
 
-/// The module count of the manifest, after the loader's checks and the id against the package.
-fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
+/// The module count and the name of the manifest, after the loader's checks and the id
+/// against the package.
+fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<(usize, String)> {
     let bad = |what: &str| invalid(format!("{id}.rvx manifest: {what}"));
     if manifest.len() < MANIFEST_HEADER
         || word(manifest, 0) as u32 != MANIFEST_MAGIC
@@ -218,5 +220,6 @@ fn check_manifest(id: &str, manifest: &[u8], core: &Core) -> Result<usize> {
             return Err(bad("module list"));
         }
     }
-    Ok(modules)
+    // The texts are id, name, description, version, author and license.
+    Ok((modules, string(half(manifest, 30))?.to_owned()))
 }

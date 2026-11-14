@@ -107,7 +107,8 @@ fn assemble_component(
     recipe.apply(&inputs.0, bundle.file(name, "data")?)
 }
 
-/// Bytes written to the data partition: both images plus every extension and theme file.
+/// Bytes written to the data partition: both images plus every extension, theme and
+/// package file.
 pub fn disk_bytes(bundle: &VerifiedBundle) -> Result<u32> {
     let firmware = Recipe::parse(bundle.file("firmware", "recipe")?)?;
     let companion = Recipe::parse(bundle.file("companion", "recipe")?)?;
@@ -115,7 +116,8 @@ pub fn disk_bytes(bundle: &VerifiedBundle) -> Result<u32> {
         firmware.output.bytes
             + companion.output.bytes
             + bundle.extension_bytes()
-            + bundle.theme_bytes(),
+            + bundle.theme_bytes()
+            + bundle.package_bytes(),
     )
     .map_err(|_| invalid("Package disk size overflow"))
 }
@@ -335,9 +337,11 @@ pub struct Artifacts {
     pub extensions: Vec<FileArtifact>,
     /// In upload order, after the extensions.
     pub themes: Vec<FileArtifact>,
+    /// In upload order, after the themes.
+    pub packages: Vec<FileArtifact>,
 }
 
-/// One extension or theme file to upload.
+/// One extension, theme or package file to upload.
 pub struct FileArtifact {
     pub id: String,
     /// Device path without the leading slash.
@@ -368,6 +372,7 @@ impl Artifacts {
             self.extensions
                 .iter()
                 .chain(&self.themes)
+                .chain(&self.packages)
                 .map(|file| (file.path.as_str(), file.bytes.as_slice())),
         );
         files
@@ -435,6 +440,7 @@ pub fn assemble_with_hardware_policy(
         nor_installer: nor_installer(bundle)?,
         extensions: artifacts(bundle.extension_files()),
         themes: artifacts(bundle.theme_files()),
+        packages: artifacts(bundle.package_files()),
     })
 }
 

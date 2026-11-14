@@ -204,6 +204,11 @@ fn output_is_created_exclusively_with_a_report() {
             path: "Revola/Themes/flat.rvt".into(),
             bytes: vec![6],
         }],
+        packages: vec![FileArtifact {
+            id: "2048".into(),
+            path: "Revola/Games/2048/2048.eapp".into(),
+            bytes: vec![7],
+        }],
     };
     let report = artifacts.write(&out).unwrap();
     assert_eq!(
@@ -212,6 +217,10 @@ fn output_is_created_exclusively_with_a_report() {
     );
     assert_eq!(fs::read(out.join("Revola/Extensions/eq.rvx")).unwrap(), [5]);
     assert_eq!(fs::read(out.join("Revola/Themes/flat.rvt")).unwrap(), [6]);
+    assert_eq!(
+        fs::read(out.join("Revola/Games/2048/2048.eapp")).unwrap(),
+        [7]
+    );
     assert_eq!(
         report.files["Revola/Firmware/loader.bin"].sha256,
         sha256(&[3])
