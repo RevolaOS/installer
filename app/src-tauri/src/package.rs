@@ -25,6 +25,11 @@ pub struct PackageInfo {
     /// GitHub release page and body of the downloaded release; absent for local packages.
     release_url: Option<String>,
     notes: Option<String>,
+    /// Display names of what the package installs beside the firmware.
+    extensions: Vec<String>,
+    themes: Vec<String>,
+    games: Vec<String>,
+    apps: Vec<String>,
 }
 
 fn package_info(bundle: &VerifiedBundle, filename: Option<String>) -> Result<PackageInfo, String> {
@@ -51,6 +56,10 @@ fn package_info(bundle: &VerifiedBundle, filename: Option<String>) -> Result<Pac
         filename,
         release_url: None,
         notes: None,
+        extensions: bundle.names().extensions.clone(),
+        themes: bundle.names().themes.clone(),
+        games: bundle.names().games.clone(),
+        apps: bundle.names().apps.clone(),
     })
 }
 

@@ -8,6 +8,11 @@ export interface PackageInfo {
   /** GitHub release page and body; null for local packages. */
   release_url: string | null;
   notes: string | null;
+  /** Display names of what the package installs beside the firmware. */
+  extensions: string[];
+  themes: string[];
+  games: string[];
+  apps: string[];
 }
 
 export async function chooseLocalPackage(): Promise<PackageInfo | null> {

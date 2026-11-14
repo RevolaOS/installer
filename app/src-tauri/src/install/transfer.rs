@@ -46,9 +46,9 @@ pub(super) struct Upload<'a> {
     pub(super) bytes: &'a [u8],
 }
 
-/// The uploads in order: both images, then the extensions, then the themes. Extension
-/// files follow the core so a failed upload never leaves a core that expects
-/// extensions which are not there yet.
+/// The uploads in order: both images, then the extensions, the themes and the game
+/// and app packages. Extension files follow the core so a failed upload never leaves
+/// a core that expects extensions which are not there yet.
 pub(super) fn uploads(artifacts: &Artifacts) -> Vec<Upload<'_>> {
     let mut files = vec![
         Upload {
@@ -69,6 +69,7 @@ pub(super) fn uploads(artifacts: &Artifacts) -> Vec<Upload<'_>> {
     for (prefix, stage, group) in [
         ("uploadExtension", "uploadExtensions", &artifacts.extensions),
         ("uploadTheme", "uploadThemes", &artifacts.themes),
+        ("uploadPackage", "uploadPackages", &artifacts.packages),
     ] {
         files.extend(group.iter().enumerate().map(|(index, file)| Upload {
             report: format!("{prefix}{index}"),

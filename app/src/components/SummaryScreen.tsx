@@ -29,6 +29,16 @@ const SummaryScreen: React.FC<ISummaryScreenProps> = ({ mode, pkg, onConfirm, on
       value: pkg.filename ? `${pkg.version} (local package)` : pkg.version,
     },
   ];
+  if (install) {
+    for (const [label, names] of [
+      ["Extensions", pkg.extensions],
+      ["Themes", pkg.themes],
+      ["Games", pkg.games],
+      ["Apps", pkg.apps],
+    ] as const) {
+      if (names.length) rows.push({ label, value: names.join(", ") });
+    }
+  }
 
   return (
     <InstallerScreen.Root aria-labelledby="summary-title">
@@ -51,7 +61,7 @@ const SummaryScreen: React.FC<ISummaryScreenProps> = ({ mode, pkg, onConfirm, on
                 className="flex flex-wrap items-center justify-between gap-x-5 gap-y-1 border-b border-[#e2dfd9] py-3 text-left last:border-0"
               >
                 <dt className="text-body">{label}</dt>
-                <dd className="font-medium text-ink">{value}</dd>
+                <dd className="max-w-[70%] text-right font-medium text-ink">{value}</dd>
               </div>
             ))}
           </dl>

@@ -177,6 +177,7 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
         nor_installer: b"installer".to_vec(),
         extensions: Vec::new(),
         themes: Vec::new(),
+        packages: Vec::new(),
     };
     let mut reports = Vec::new();
     for (device, firmware) in [
@@ -312,6 +313,10 @@ fn theme_uploads_follow_the_extensions_and_their_reports_are_collected() {
         nor_installer: vec![1],
         extensions: vec![file("eq", "Revola/Extensions/eq.rvx")],
         themes: vec![file("flat", "Revola/Themes/flat.rvt")],
+        packages: vec![
+            file("2048", "Revola/Games/2048/2048.eapp"),
+            file("2048", "Revola/Games/2048/Manifest.plist"),
+        ],
     };
     let uploads = super::super::transfer::uploads(&artifacts);
     assert_eq!(
@@ -340,6 +345,16 @@ fn theme_uploads_follow_the_extensions_and_their_reports_are_collected() {
                 "/Revola/Extensions/eq.rvx"
             ),
             ("uploadTheme0", "uploadThemes", "/Revola/Themes/flat.rvt"),
+            (
+                "uploadPackage0",
+                "uploadPackages",
+                "/Revola/Games/2048/2048.eapp"
+            ),
+            (
+                "uploadPackage1",
+                "uploadPackages",
+                "/Revola/Games/2048/Manifest.plist"
+            ),
         ]
     );
 

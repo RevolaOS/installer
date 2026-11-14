@@ -48,6 +48,7 @@ const labels: Record<string, string> = {
   uploadFirmware: "Uploading RevolaOS",
   uploadExtensions: "Uploading extensions",
   uploadThemes: "Uploading themes",
+  uploadPackages: "Uploading games and apps",
   removeFiles: "Removing RevolaOS files",
   bootloader: "Preparing bootloader",
   restart: "Restarting iPod",
