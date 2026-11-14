@@ -7,7 +7,7 @@ use revola_bundle::{
     assembly::{self, Artifacts},
     VerifiedBundle,
 };
-use revola_device::{Session, UploadHelper, UploadOptions};
+use revola_device::{Session, UploadFile, UploadHelper, UploadOptions};
 use std::io::Cursor;
 
 pub(super) fn inspect_storage(
@@ -83,52 +83,71 @@ pub(super) fn uploads(artifacts: &Artifacts) -> Vec<Upload<'_>> {
 }
 
 pub(super) fn install(
-    mut session: Session,
+    session: Session,
     helper: &UploadHelper,
     artifacts: &Artifacts,
     action: assembly::BootloaderAction,
     job: &mut Job<'_>,
 ) -> Result<InstallOutcome> {
-    for Upload {
-        report,
-        stage,
-        name,
-        destination,
-        bytes,
-    } in uploads(artifacts)
-    {
-        job.stage(stage, &format!("Preparing {name}"))?;
-        let log_job = std::cell::RefCell::new(&mut *job);
-        let uploaded = session.upload_with_log(
-            helper,
-            &mut Cursor::new(bytes),
-            UploadOptions {
-                destination,
+    let uploads = uploads(artifacts);
+    let mut cursors: Vec<Cursor<&[u8]>> = uploads.iter().map(|u| Cursor::new(u.bytes)).collect();
+    let mut files: Vec<UploadFile<'_>> = cursors
+        .iter_mut()
+        .zip(&uploads)
+        .map(|(input, upload)| UploadFile {
+            input,
+            options: UploadOptions {
+                destination: upload.destination.clone(),
                 overwrite: true,
             },
-            |p| {
-                let detail = match p.stage {
-                    "hash" => format!("Checking {name}"),
-                    "launch" => "Starting transfer helper".into(),
-                    "upload" => format!("Uploading {name}"),
-                    "write" => format!("Writing {name}"),
-                    "verify" => format!("Verifying {name}"),
-                    "dfu-return" => "Reconnecting to iPod".into(),
-                    "complete" => format!("Verified {name}"),
-                    _ => format!("Preparing {name}"),
-                };
-                let progress = match p.stage {
-                    "hash" | "upload" | "write" | "verify" | "complete" => {
-                        Some((p.completed, p.total))
-                    }
-                    _ => None,
-                };
-                log_job.borrow_mut().emit(detail, progress);
-            },
-            |detail| log_job.borrow_mut().log(detail),
-        )?;
-        session = uploaded.session;
-        job.save_json(&format!("{report}.json"), &uploaded.report)?;
+        })
+        .collect();
+    let log_job = std::cell::RefCell::new(&mut *job);
+    // Hashing runs over every file before the launch and keeps the current stage.
+    let mut current = None;
+    let uploaded = session.upload_files(
+        helper,
+        &mut files,
+        |p| {
+            let Upload { stage, name, .. } = &uploads[p.file];
+            let mut job = log_job.borrow_mut();
+            if p.stage != "hash" && current != Some(p.file) {
+                current = Some(p.file);
+                job.stage(stage, &format!("Preparing {name}"))
+                    .map_err(|e| revola_device::Error::Invalid(e.to_string()))?;
+            }
+            let detail = match p.stage {
+                "hash" => format!("Checking {name}"),
+                "launch" => "Starting transfer helper".into(),
+                "upload" => format!("Uploading {name}"),
+                "write" => format!("Writing {name}"),
+                "verify" => format!("Verifying {name}"),
+                "dfu-return" => "Reconnecting to iPod".into(),
+                "complete" => format!("Verified {name}"),
+                _ => format!("Preparing {name}"),
+            };
+            let progress = match p.stage {
+                "hash" | "upload" | "write" | "verify" | "complete" => Some((p.completed, p.total)),
+                _ => None,
+            };
+            job.emit(detail, progress);
+            Ok(())
+        },
+        |detail| log_job.borrow_mut().log(detail),
+    );
+    let (session, reports) = match uploaded {
+        Ok(uploaded) => (uploaded.session, uploaded.reports),
+        Err(failure) => {
+            for (upload, report) in uploads.iter().zip(&failure.reports) {
+                if let Err(e) = job.save_json(&format!("{}.json", upload.report), report) {
+                    job.log(format!("Could not save {}.json: {e}", upload.report));
+                }
+            }
+            return Err(failure.into());
+        }
+    };
+    for (upload, report) in uploads.iter().zip(&reports) {
+        job.save_json(&format!("{}.json", upload.report), report)?;
     }
     if action == assembly::BootloaderAction::Keep {
         job.begin_restart()?;

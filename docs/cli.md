@@ -21,7 +21,7 @@ target/release/revola --help
 | `bundle apply-recipe --recipe FILE --data FILE --inputs DIR --out FILE` | applies a recipe to decrypted Apple inputs |
 | `bundle export --spec FILE --base DIR --out DIR` | builds a bundle from a specification |
 | `bundle sign`, `pack`, `inspect`, `fetch`, `assemble` | operate on a bundle |
-| `upload --input FILE --destination /PATH --helper DIR` | sends one file to the data partition through the USB helper and verifies it; `--bundle DIR --key FILE` takes the helper from a bundle instead |
+| `upload --input FILE --destination /PATH [--input FILE --destination /PATH ...] --helper DIR` | sends the files to the data partition through one USB helper session and verifies each; `--bundle DIR --key FILE` takes the helper from a bundle instead |
 | `debug COMMAND` | see [Debugging a device](debug.md) |
 
 `revola --help` lists every option. Device and firmware commands talk to an iPod in BootROM DFU. Select an iPod with `--device BUS:ADDRESS` and add `--json` for machine-readable output.

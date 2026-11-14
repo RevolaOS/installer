@@ -491,6 +491,9 @@ impl VerifiedBundle {
                     "Package requires a v3 helper with storage inspection",
                 ));
             }
+            if !helper.supports_batch_upload() {
+                return Err(invalid("Package requires a helper with batch upload"));
+            }
             // A release must be able to undo itself: the helper removes the files.
             if self.manifest.purpose == Purpose::Release && !helper.supports_file_removal() {
                 return Err(invalid(
