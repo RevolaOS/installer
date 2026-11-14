@@ -53,7 +53,7 @@ Backups and assembled firmware are written under the app data directory for `org
 | Firmware bundle | newest published release of `RevolaOS/revola`, `<target>-manifest.json` asset | ed25519 key in `app/src-tauri/src/package.rs` |
 | Installer update | `RevolaOS/installer` releases through the Tauri updater | minisign key in `tauri.conf.json` |
 
-Installer releases are tagged `vYYYY.M.N`, with an optional `-beta.N`, and the workspace version in `Cargo.toml` must equal the tag without the `v`; the release workflow checks that. The scheme is a calendar version in SemVer shape because Cargo, the Tauri updater and the bundle's minimum-installer check all compare versions as SemVer.
+Installer releases are tagged `vYYYY.M.N`, with an optional `-beta.N`, and the workspace version in `Cargo.toml` must equal the tag without the `v`; the release workflow checks that. A `-` in the tag marks the release as a prerelease. The workflow runs in the `installer-release` environment, which holds the updater and Apple signing secrets and waits for a reviewer's approval; it creates a draft release with every package and `latest.json`, and the draft is published by hand once the `verify-updater` job has passed. A manual `workflow_dispatch` run on `main` builds the same packages as workflow artifacts without a release. The scheme is a calendar version in SemVer shape because Cargo, the Tauri updater and the bundle's minimum-installer check all compare versions as SemVer.
 
 `REVOLA_BUNDLE_MANIFEST_URL` and `REVOLA_BUNDLE_PUBLIC_KEY` override the bundle source at build time. The release notes shown for a firmware package and for an installer update are the bodies of those GitHub releases, read when the installer checks.
 
