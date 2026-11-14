@@ -12,7 +12,7 @@ use crate::{
 };
 
 const RVT_MAGIC: u32 = 0x3054_5652; // RVT0
-const RVT_VERSION: usize = 2;
+const RVT_VERSION: usize = 3;
 
 // Header field offsets, `RVT_HEADER_*`.
 const MAGIC: usize = 0;
